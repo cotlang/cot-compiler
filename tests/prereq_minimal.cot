@@ -1,0 +1,41 @@
+// Minimal prerequisite test
+
+fn main() {
+    println("Starting tests")
+}
+
+test "string length" {
+    const s = "hello"
+    assert(len(s) == 5, "len should be 5")
+}
+
+test "string comparison" {
+    const a = "hello"
+    const b = "hello"
+    assert(a == b, "strings should be equal")
+}
+
+test "simple struct" {
+    var p: Point = Point{ .x = 10, .y = 20 }
+    assert(p.x == 10, "x should be 10")
+    assert(p.y == 20, "y should be 20")
+}
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+test "array indexing" {
+    const arr = [1, 2, 3]
+    assert(arr[0] == 1, "arr[0]")
+    assert(arr[1] == 2, "arr[1]")
+}
+
+test "for-in range" {
+    var sum: i64 = 0
+    for i in 0..3 {
+        sum = sum + i
+    }
+    assert(sum == 3, "0+1+2 = 3")
+}

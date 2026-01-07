@@ -1,0 +1,355 @@
+// AST node definitions for the Cot self-hosted compiler
+//
+// Defines the abstract syntax tree structure produced by the parser.
+// Uses a tagged-union style with kind enums and flat structs.
+
+import "token"
+
+// =============================================================================
+// Statement Types
+// =============================================================================
+
+enum StmtKind {
+    ExpressionStmt,     // Expression statement (e.g., function call)
+    VarDecl,            // Variable declaration: var x: T = expr
+    ConstDecl,          // Constant declaration: const x: T = expr
+    ReturnStmt,         // Return statement: return expr
+    IfStmt,             // If statement: if (cond) { } else { }
+    WhileStmt,          // While loop: while (cond) { }
+    ForStmt,            // For loop: for (item in iter) { }
+    LoopStmt,           // Infinite loop: loop { }
+    BlockStmt,          // Block: { stmts... }
+    FunctionDecl,       // Function declaration: fn name(params) RetType { }
+    StructDecl,         // Struct declaration: struct Name { fields }
+    UnionDecl,          // Union declaration: union Name { fields }
+    EnumDecl,           // Enum declaration: enum Name { variants }
+    ImplDecl,           // Impl block: impl Type { methods }
+    ImportStmt,         // Import statement: import "module"
+    BreakStmt,          // Break statement
+    ContinueStmt,       // Continue statement
+    SwitchStmt,         // Switch statement: switch (expr) { arms }
+    TraitDecl,          // Trait declaration
+    TypeAliasDecl,      // Type alias: type Name = Type
+    DeferStmt,          // Defer statement: defer cleanup()
+    TryStmt,            // Try/catch: try { } catch { }
+    ThrowStmt,          // Throw: throw expr
+    TestDecl,           // Test declaration: test "name" { }
+    ViewDecl,           // View declaration: view name: Type = @base_field
+    ComptimeStmt,       // Comptime block: comptime { } or comptime if { }
+}
+
+// =============================================================================
+// Expression Types
+// =============================================================================
+
+enum ExprKind {
+    // Literals
+    IntLiteral,     // Integer: 42, 0xFF, 0b1010
+    DecLiteral,     // Decimal: 3.14
+    StrLiteral,     // String: "hello"
+    BoolLiteral,    // Boolean: true, false
+    NullLiteral,    // Null: null
+
+    // Names and access
+    IdentifierExpr, // Variable/function name
+    FieldExpr,      // Field access: expr.field
+    IndexExpr,      // Index access: expr[index]
+
+    // Operators
+    BinaryExpr,     // Binary op: a + b, a == b
+    UnaryExpr,      // Unary op: -x, !x, &x, x.*
+
+    // Calls and construction
+    CallExpr,       // Function call: fn(args)
+    MethodCallExpr, // Method call: obj.method(args)
+    StructInitExpr, // Struct init: Type{ .field = val }
+    ArrayInitExpr,  // Array init: [1, 2, 3]
+
+    // Control flow expressions
+    IfExpr,         // If expression: if (c) a else b
+    BlockExpr,      // Block expression: { stmts; expr }
+    SwitchExpr,     // Switch expression
+
+    // Other
+    LambdaExpr,     // Lambda: |args| expr
+    RangeExpr,      // Range: start..end
+    CastExpr,       // Type cast: expr as Type
+    SliceExpr,      // Slice: expr[start..end]
+    InterpStringExpr, // Interpolated string: "Hello ${name}!"
+}
+
+// =============================================================================
+// Type Reference Types
+// =============================================================================
+
+enum TypeKind {
+    Named,          // Named type: i64, String, MyStruct
+    Pointer,        // Pointer: *T
+    Optional,       // Optional: ?T
+    Array,          // Array: [N]T
+    Slice,          // Slice: []T
+    Function,       // Function type: fn(A, B) -> C
+    Generic,        // Generic instantiation: Vec[T]
+    Inferred,       // Type to be inferred: _
+}
+
+// =============================================================================
+// AST Node Structs
+// =============================================================================
+
+// Source location for error reporting
+struct SourceLoc {
+    line: i64,
+    column: i64,
+    start: i64,
+    end: i64,
+}
+
+// Type reference node
+struct TypeRef {
+    kind: TypeKind,
+    loc: SourceLoc,
+
+    // Named type
+    name: string,
+
+    // Pointer, Optional, Array, Slice - inner type
+    inner: ?*TypeRef,
+
+    // Array size (for fixed arrays)
+    array_size: i64,
+
+    // Function type
+    param_types: []*TypeRef,
+    return_type: ?*TypeRef,
+
+    // Generic type arguments
+    type_args: []*TypeRef,
+}
+
+// Expression node
+struct Expr {
+    kind: ExprKind,
+    loc: SourceLoc,
+
+    // Literals
+    int_value: i64,
+    dec_value: string,      // Keep as string to preserve precision
+    str_value: string,
+    bool_value: bool,
+
+    // Identifier
+    name: string,
+
+    // Binary/Unary operators
+    op: TokenType,
+    left: ?*Expr,
+    right: ?*Expr,
+    operand: ?*Expr,
+
+    // Call
+    callee: ?*Expr,
+    args: []*Expr,
+
+    // Field/Index access
+    object: ?*Expr,
+    field_name: string,
+    index: ?*Expr,
+
+    // Struct init
+    struct_type: ?*TypeRef,
+    field_inits: []FieldInit,
+
+    // Array init
+    elements: []*Expr,
+
+    // If expression
+    condition: ?*Expr,
+    then_branch: ?*Expr,
+    else_branch: ?*Expr,
+
+    // Block expression
+    stmts: []*Stmt,
+    result: ?*Expr,
+
+    // Lambda
+    params: []Param,
+    body: ?*Expr,
+
+    // Range
+    range_start: ?*Expr,
+    range_end: ?*Expr,
+    range_inclusive: bool,
+
+    // Cast
+    cast_type: ?*TypeRef,
+
+    // Slice
+    slice_start: ?*Expr,
+    slice_end: ?*Expr,
+}
+
+// Statement node
+struct Stmt {
+    kind: StmtKind,
+    loc: SourceLoc,
+
+    // Expression statement
+    expr: ?*Expr,
+
+    // Var/Const declaration
+    var_name: string,
+    var_type: ?*TypeRef,
+    var_init: ?*Expr,
+    var_mutable: bool,
+
+    // Return
+    return_value: ?*Expr,
+
+    // If statement
+    if_cond: ?*Expr,
+    if_then: ?*Stmt,
+    if_else: ?*Stmt,
+
+    // While loop
+    while_cond: ?*Expr,
+    while_body: ?*Stmt,
+
+    // For loop
+    for_var: string,
+    for_iter: ?*Expr,
+    for_body: ?*Stmt,
+
+    // Block
+    block_stmts: []*Stmt,
+
+    // Function
+    fn_name: string,
+    fn_params: []Param,
+    fn_return_type: ?*TypeRef,
+    fn_body: ?*Stmt,
+    fn_public: bool,
+
+    // Struct
+    struct_name: string,
+    struct_fields: []Field,
+
+    // Enum
+    enum_name: string,
+    enum_variants: []EnumVariant,
+
+    // Impl
+    impl_type: ?*TypeRef,
+    impl_trait: ?*TypeRef,
+    impl_methods: []*Stmt,
+
+    // Import
+    import_path: string,
+
+    // Switch
+    switch_expr: ?*Expr,
+    switch_arms: []SwitchArm,
+
+    // TypeAlias
+    alias_name: string,
+    alias_type: ?*TypeRef,
+
+    // Loop (infinite)
+    loop_body: ?*Stmt,
+
+    // Union (same structure as struct)
+    union_name: string,
+    union_fields: []Field,
+
+    // Defer
+    defer_expr: ?*Expr,
+
+    // Try/Catch
+    try_body: ?*Stmt,
+    catch_body: ?*Stmt,
+    catch_var: string,          // Optional error binding variable
+
+    // Throw
+    throw_expr: ?*Expr,
+
+    // Test
+    test_name: string,
+    test_body: ?*Stmt,
+
+    // View
+    view_name: string,
+    view_type: ?*TypeRef,
+    view_base_field: string,
+    view_offset: i64,
+
+    // Trait
+    trait_name: string,
+    trait_methods: []*Stmt,
+
+    // Comptime
+    comptime_body: ?*Stmt,
+    comptime_cond: ?*Expr,     // For comptime if
+    comptime_else: ?*Stmt,     // For comptime if else branch
+}
+
+// =============================================================================
+// Supporting Structs
+// =============================================================================
+
+// Function/method parameter
+struct Param {
+    name: string,
+    param_type: ?*TypeRef,
+    loc: SourceLoc,
+}
+
+// Struct field
+struct Field {
+    name: string,
+    field_type: ?*TypeRef,
+    loc: SourceLoc,
+}
+
+// Struct field initializer
+struct FieldInit {
+    name: string,
+    value: ?*Expr,
+    loc: SourceLoc,
+}
+
+// Enum variant
+struct EnumVariant {
+    name: string,
+    value: ?*Expr,       // Optional explicit value
+    loc: SourceLoc,
+}
+
+// Switch arm
+struct SwitchArm {
+    pattern: ?*Expr,     // Pattern to match (or null for default)
+    body: ?*Expr,        // Body expression
+    is_default: bool,
+    loc: SourceLoc,
+}
+
+// =============================================================================
+// Constructor Helpers
+// =============================================================================
+
+fn newSourceLoc(line: i64, column: i64, start: i64, end: i64) SourceLoc {
+    return SourceLoc{
+        .line = line,
+        .column = column,
+        .start = start,
+        .end = end,
+    }
+}
+
+fn sourceLocFromToken(tok: Token) SourceLoc {
+    return SourceLoc{
+        .line = tok.line,
+        .column = tok.column,
+        .start = tok.span.start,
+        .end = tok.span.end,
+    }
+}

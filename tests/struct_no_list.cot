@@ -1,0 +1,11 @@
+// Test struct string field without list
+struct Simple {
+    num: int,
+    text: string,
+}
+
+fn main() {
+    const s = Simple{ .num = 42, .text = "hello" }
+    println(s.num)   // Expected: 42
+    println(s.text)  // Expected: hello
+}

@@ -1,0 +1,27 @@
+// Trace List<struct> field access
+
+struct Simple {
+    num: i64,
+    text: string,
+}
+
+fn main() {
+    println("=== Test 1: Direct struct ===")
+    const s = Simple{ .num = 42, .text = "hello" }
+    println("Direct s.num:")
+    println(s.num)
+    println("Direct s.text:")
+    println(s.text)
+
+    println("=== Test 2: List with struct ===")
+    const items: List<Simple> = List.new()
+    println("Pushing struct...")
+    items.push(Simple{ .num = 100, .text = "world" })
+    println("Getting from list...")
+    const item = items.get(0)
+    println("Got item, accessing num:")
+    println(item.num)
+    println("Accessing text:")
+    println(item.text)
+    println("=== Done ===")
+}

@@ -1,0 +1,63 @@
+// Test slice syntax s[start..end]
+
+fn main() {
+    const s = "Hello, World!"
+
+    // Get "Hello" (0..5)
+    const hello = s[0..5]
+    println(hello)
+
+    // Get "World" (7..12)
+    const world = s[7..12]
+    println(world)
+
+    // Get single character at index 0
+    const first = s[0..1]
+    println("First char: " + first)
+
+    // Test with variables
+    const start = 0
+    const end = 5
+    const slice = s[start..end]
+    println("Variable slice: " + slice)
+}
+
+test "basic slice" {
+    const s = "Hello, World!"
+
+    // Extract "Hello"
+    const hello = s[0..5]
+    assert(hello == "Hello", "expected Hello")
+
+    // Extract "World"
+    const world = s[7..12]
+    assert(world == "World", "expected World")
+}
+
+test "single char slice" {
+    const s = "ABC"
+    assert(s[0..1] == "A", "first char")
+    assert(s[1..2] == "B", "second char")
+    assert(s[2..3] == "C", "third char")
+}
+
+test "slice with variables" {
+    const s = "0123456789"
+    const start = 2
+    const end = 7
+    const result = s[start..end]
+    assert(result == "23456", "variable slice")
+}
+
+test "empty slice" {
+    const s = "Hello"
+    const empty = s[0..0]
+    assert(len(empty) == 0, "empty slice should have length 0")
+}
+
+test "slice to end simulation" {
+    const s = "Hello"
+    const n = len(s)
+    const result = s[1..n]
+    assert(result == "ello", "slice from 1 to end")
+}

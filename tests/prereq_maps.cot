@@ -1,0 +1,47 @@
+// Test Map functionality
+
+fn main() {
+    println("Map tests")
+}
+
+test "Map creation" {
+    var m: Map<string, i64> = Map.new()
+    assert(m.len() == 0, "new map should be empty")
+}
+
+test "Map set and get" {
+    var m: Map<string, i64> = Map.new()
+    m.set("x", 10)
+    m.set("y", 20)
+
+    assert(m.get("x") == 10, "get x")
+    assert(m.get("y") == 20, "get y")
+}
+
+test "Map has" {
+    var m: Map<string, i64> = Map.new()
+    m.set("exists", 42)
+
+    assert(m.has("exists"), "has exists")
+    assert(!m.has("missing"), "not has missing")
+}
+
+test "Map with string values" {
+    var keywords: Map<string, string> = Map.new()
+    keywords.set("fn", "Function")
+    keywords.set("let", "Let")
+
+    assert(keywords.get("fn") == "Function", "get fn")
+    assert(keywords.get("let") == "Let", "get let")
+}
+
+test "Map delete" {
+    var m: Map<string, i64> = Map.new()
+    m.set("a", 1)
+    m.set("b", 2)
+
+    m.delete("a")
+
+    assert(!m.has("a"), "a deleted")
+    assert(m.has("b"), "b still there")
+}

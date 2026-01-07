@@ -1,0 +1,203 @@
+// Lexer tests for the Cot self-hosted compiler
+
+import "../src/token"
+import "../src/lexer"
+
+fn main() {
+    println("=== Lexer Tests ===")
+    println("")
+
+    // Test 1: Simple tokens
+    testSimpleTokens()
+
+    // Test 2: Keywords
+    testKeywords()
+
+    // Test 3: Numbers
+    testNumbers()
+
+    // Test 4: Strings
+    testStrings()
+
+    // Test 5: Operators
+    testOperators()
+
+    // Test 6: Full program
+    testFullProgram()
+
+    println("")
+    println("=== All tests passed! ===")
+}
+
+fn testSimpleTokens() {
+    println("Test: Simple tokens")
+    var lexer: Lexer = newLexer("( ) [ ] { } , . ; :")
+
+    expectToken(lexerScanToken(&lexer), TokenType.LeftParen, "(")
+    expectToken(lexerScanToken(&lexer), TokenType.RightParen, ")")
+    expectToken(lexerScanToken(&lexer), TokenType.LeftBracket, "[")
+    expectToken(lexerScanToken(&lexer), TokenType.RightBracket, "]")
+    expectToken(lexerScanToken(&lexer), TokenType.LeftBrace, "{")
+    expectToken(lexerScanToken(&lexer), TokenType.RightBrace, "}")
+    expectToken(lexerScanToken(&lexer), TokenType.Comma, ",")
+    expectToken(lexerScanToken(&lexer), TokenType.Dot, ".")
+    expectToken(lexerScanToken(&lexer), TokenType.Semicolon, ";")
+    expectToken(lexerScanToken(&lexer), TokenType.Colon, ":")
+    expectToken(lexerScanToken(&lexer), TokenType.Eof, "")
+
+    println("  PASS")
+}
+
+fn testKeywords() {
+    println("Test: Keywords")
+    var lexer: Lexer = newLexer("fn struct if else while for return var const")
+
+    expectToken(lexerScanToken(&lexer), TokenType.KwFn, "fn")
+    expectToken(lexerScanToken(&lexer), TokenType.KwStruct, "struct")
+    expectToken(lexerScanToken(&lexer), TokenType.KwIf, "if")
+    expectToken(lexerScanToken(&lexer), TokenType.KwElse, "else")
+    expectToken(lexerScanToken(&lexer), TokenType.KwWhile, "while")
+    expectToken(lexerScanToken(&lexer), TokenType.KwFor, "for")
+    expectToken(lexerScanToken(&lexer), TokenType.KwReturn, "return")
+    expectToken(lexerScanToken(&lexer), TokenType.KwVar, "var")
+    expectToken(lexerScanToken(&lexer), TokenType.KwConst, "const")
+    expectToken(lexerScanToken(&lexer), TokenType.Eof, "")
+
+    println("  PASS")
+}
+
+fn testNumbers() {
+    println("Test: Numbers")
+    var lexer: Lexer = newLexer("42 3.14 0xFF 0b1010")
+
+    expectToken(lexerScanToken(&lexer), TokenType.IntegerLiteral, "42")
+    expectToken(lexerScanToken(&lexer), TokenType.DecimalLiteral, "3.14")
+    expectToken(lexerScanToken(&lexer), TokenType.IntegerLiteral, "0xFF")
+    expectToken(lexerScanToken(&lexer), TokenType.IntegerLiteral, "0b1010")
+    expectToken(lexerScanToken(&lexer), TokenType.Eof, "")
+
+    println("  PASS")
+}
+
+fn testStrings() {
+    println("Test: Strings")
+    var q: string = char(34)  // quote character
+    var source: string = q + "hello" + q + " " + q + "world" + q
+    var lexer: Lexer = newLexer(source)
+
+    var expected1: string = q + "hello" + q
+    var expected2: string = q + "world" + q
+    expectToken(lexerScanToken(&lexer), TokenType.StringLiteral, expected1)
+    expectToken(lexerScanToken(&lexer), TokenType.StringLiteral, expected2)
+    expectToken(lexerScanToken(&lexer), TokenType.Eof, "")
+
+    println("  PASS")
+}
+
+fn testOperators() {
+    println("Test: Operators")
+    var lexer: Lexer = newLexer("+ - * / = == != < <= > >= && || -> =>")
+
+    expectToken(lexerScanToken(&lexer), TokenType.Plus, "+")
+    expectToken(lexerScanToken(&lexer), TokenType.Minus, "-")
+    expectToken(lexerScanToken(&lexer), TokenType.Star, "*")
+    expectToken(lexerScanToken(&lexer), TokenType.Slash, "/")
+    expectToken(lexerScanToken(&lexer), TokenType.Equals, "=")
+    expectToken(lexerScanToken(&lexer), TokenType.EqualEqual, "==")
+    expectToken(lexerScanToken(&lexer), TokenType.BangEqual, "!=")
+    expectToken(lexerScanToken(&lexer), TokenType.Less, "<")
+    expectToken(lexerScanToken(&lexer), TokenType.LessEqual, "<=")
+    expectToken(lexerScanToken(&lexer), TokenType.Greater, ">")
+    expectToken(lexerScanToken(&lexer), TokenType.GreaterEqual, ">=")
+    expectToken(lexerScanToken(&lexer), TokenType.AmpAmp, "&&")
+    expectToken(lexerScanToken(&lexer), TokenType.PipePipe, "||")
+    expectToken(lexerScanToken(&lexer), TokenType.Arrow, "->")
+    expectToken(lexerScanToken(&lexer), TokenType.FatArrow, "=>")
+    expectToken(lexerScanToken(&lexer), TokenType.Eof, "")
+
+    println("  PASS")
+}
+
+fn testFullProgram() {
+    println("Test: Full program")
+    var source: string = "fn main() {\n    var x: i64 = 42\n    println(x)\n}"
+    var lexer: Lexer = newLexer(source)
+
+    expectToken(lexerScanToken(&lexer), TokenType.KwFn, "fn")
+    expectToken(lexerScanToken(&lexer), TokenType.Identifier, "main")
+    expectToken(lexerScanToken(&lexer), TokenType.LeftParen, "(")
+    expectToken(lexerScanToken(&lexer), TokenType.RightParen, ")")
+    expectToken(lexerScanToken(&lexer), TokenType.LeftBrace, "{")
+    expectToken(lexerScanToken(&lexer), TokenType.KwVar, "var")
+    expectToken(lexerScanToken(&lexer), TokenType.Identifier, "x")
+    expectToken(lexerScanToken(&lexer), TokenType.Colon, ":")
+    expectToken(lexerScanToken(&lexer), TokenType.Identifier, "i64")
+    expectToken(lexerScanToken(&lexer), TokenType.Equals, "=")
+    expectToken(lexerScanToken(&lexer), TokenType.IntegerLiteral, "42")
+    expectToken(lexerScanToken(&lexer), TokenType.Identifier, "println")
+    expectToken(lexerScanToken(&lexer), TokenType.LeftParen, "(")
+    expectToken(lexerScanToken(&lexer), TokenType.Identifier, "x")
+    expectToken(lexerScanToken(&lexer), TokenType.RightParen, ")")
+    expectToken(lexerScanToken(&lexer), TokenType.RightBrace, "}")
+    expectToken(lexerScanToken(&lexer), TokenType.Eof, "")
+
+    println("  PASS")
+}
+
+fn expectToken(token: Token, expected_type: TokenType, expected_lexeme: string) {
+    if (token.token_type != expected_type) {
+        println("  FAIL: expected type mismatch")
+        println("    expected: " + tokenTypeName(expected_type))
+        println("    got: " + tokenTypeName(token.token_type))
+        println("    lexeme: " + token.lexeme)
+    }
+    if (expected_lexeme != "" and token.lexeme != expected_lexeme) {
+        println("  FAIL: lexeme mismatch")
+        println("    expected: " + expected_lexeme)
+        println("    got: " + token.lexeme)
+    }
+}
+
+fn tokenTypeName(t: TokenType) string {
+    if (t == TokenType.Identifier) { return "Identifier" }
+    if (t == TokenType.IntegerLiteral) { return "IntegerLiteral" }
+    if (t == TokenType.DecimalLiteral) { return "DecimalLiteral" }
+    if (t == TokenType.StringLiteral) { return "StringLiteral" }
+    if (t == TokenType.LeftParen) { return "LeftParen" }
+    if (t == TokenType.RightParen) { return "RightParen" }
+    if (t == TokenType.LeftBracket) { return "LeftBracket" }
+    if (t == TokenType.RightBracket) { return "RightBracket" }
+    if (t == TokenType.LeftBrace) { return "LeftBrace" }
+    if (t == TokenType.RightBrace) { return "RightBrace" }
+    if (t == TokenType.Comma) { return "Comma" }
+    if (t == TokenType.Dot) { return "Dot" }
+    if (t == TokenType.Colon) { return "Colon" }
+    if (t == TokenType.Semicolon) { return "Semicolon" }
+    if (t == TokenType.Plus) { return "Plus" }
+    if (t == TokenType.Minus) { return "Minus" }
+    if (t == TokenType.Star) { return "Star" }
+    if (t == TokenType.Slash) { return "Slash" }
+    if (t == TokenType.Equals) { return "Equals" }
+    if (t == TokenType.EqualEqual) { return "EqualEqual" }
+    if (t == TokenType.BangEqual) { return "BangEqual" }
+    if (t == TokenType.Less) { return "Less" }
+    if (t == TokenType.LessEqual) { return "LessEqual" }
+    if (t == TokenType.Greater) { return "Greater" }
+    if (t == TokenType.GreaterEqual) { return "GreaterEqual" }
+    if (t == TokenType.AmpAmp) { return "AmpAmp" }
+    if (t == TokenType.PipePipe) { return "PipePipe" }
+    if (t == TokenType.Arrow) { return "Arrow" }
+    if (t == TokenType.FatArrow) { return "FatArrow" }
+    if (t == TokenType.KwFn) { return "KwFn" }
+    if (t == TokenType.KwStruct) { return "KwStruct" }
+    if (t == TokenType.KwIf) { return "KwIf" }
+    if (t == TokenType.KwElse) { return "KwElse" }
+    if (t == TokenType.KwWhile) { return "KwWhile" }
+    if (t == TokenType.KwFor) { return "KwFor" }
+    if (t == TokenType.KwReturn) { return "KwReturn" }
+    if (t == TokenType.KwVar) { return "KwVar" }
+    if (t == TokenType.KwConst) { return "KwConst" }
+    if (t == TokenType.Eof) { return "Eof" }
+    if (t == TokenType.Invalid) { return "Invalid" }
+    return "Unknown"
+}

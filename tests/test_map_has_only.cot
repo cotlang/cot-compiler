@@ -1,0 +1,8 @@
+// Test combined negated method call
+
+fn main() {
+    var m: Map<string, i64> = Map.new()
+    m.set("key", 1)
+    const negResult = !m.has("missing")
+    println("done")
+}

@@ -1,0 +1,8 @@
+// Test Map.has() specifically
+
+fn main() {
+    var m: Map<string, i64> = Map.new()
+    m.set("key", 42)
+    const result = m.has("key")
+    println("result obtained")
+}

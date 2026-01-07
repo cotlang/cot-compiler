@@ -1,0 +1,261 @@
+// Phase 0: Basic Prerequisites Test
+// Tests without enums to verify core features first
+
+fn main() {
+    println("=== Basic Prerequisites ===")
+}
+
+// ============================================================
+// P0.1: String Length
+// ============================================================
+
+test "P0.1 - len() on strings" {
+    const s = "hello"
+    assert(len(s) == 5, "len('hello') should be 5")
+
+    const empty = ""
+    assert(len(empty) == 0, "len('') should be 0")
+
+    const with_spaces = "  hi  "
+    assert(len(with_spaces) == 6, "len('  hi  ') should be 6")
+}
+
+// ============================================================
+// P0.2: Substring Access (1-based indexing)
+// ============================================================
+
+test "P0.2a - substring with (start:length) syntax" {
+    const s = "hello world"
+
+    // Extract "hello" - positions 1-5, length 5
+    const first = s(1:5)
+    assert(first == "hello", "s(1:5) should be 'hello'")
+
+    // Extract "world" - positions 7-11, length 5
+    const second = s(7:5)
+    assert(second == "world", "s(7:5) should be 'world'")
+
+    // Single character
+    const char_h = s(1:1)
+    assert(char_h == "h", "s(1:1) should be 'h'")
+}
+
+test "P0.2b - iterate string characters" {
+    const s = "abc"
+    var result = ""
+    var i: i64 = 1
+    while (i <= len(s)) {
+        const ch = s(i:1)
+        result = result + ch + "-"
+        i += 1
+    }
+    assert(result == "a-b-c-", "character iteration should work")
+}
+
+// ============================================================
+// P0.3: Character Code Conversion
+// ============================================================
+
+test "P0.3a - char() converts code to character" {
+    const a = char(97)
+    assert(a == "a", "char(97) should be 'a'")
+
+    const A = char(65)
+    assert(A == "A", "char(65) should be 'A'")
+}
+
+test "P0.3b - string comparison for character classification" {
+    const ch = "c"
+    const is_lower = ch >= "a" and ch <= "z"
+    assert(is_lower, "'c' should be lowercase letter")
+
+    const digit = "5"
+    const is_digit = digit >= "0" and digit <= "9"
+    assert(is_digit, "'5' should be a digit")
+}
+
+// ============================================================
+// P0.4: Map<string, T>
+// ============================================================
+
+test "P0.4a - Map creation and basic ops" {
+    var m: Map<string, i64> = Map.new()
+
+    m.set("x", 10)
+    m.set("y", 20)
+    m.set("z", 30)
+
+    assert(m.get("x") == 10, "m.get('x') should be 10")
+    assert(m.get("y") == 20, "m.get('y') should be 20")
+    assert(m.get("z") == 30, "m.get('z') should be 30")
+}
+
+test "P0.4b - Map has() and len()" {
+    var m: Map<string, i64> = Map.new()
+    m.set("exists", 42)
+
+    assert(m.has("exists"), "m.has('exists') should be true")
+    assert(!m.has("missing"), "m.has('missing') should be false")
+    assert(m.len() == 1, "m.len() should be 1")
+}
+
+test "P0.4c - Map with string values" {
+    var keywords: Map<string, string> = Map.new()
+    keywords.set("fn", "Function")
+    keywords.set("let", "Let")
+    keywords.set("if", "If")
+
+    assert(keywords.get("fn") == "Function", "keywords.get('fn')")
+    assert(keywords.has("let"), "keywords.has('let')")
+    assert(keywords.len() == 3, "should have 3 keywords")
+}
+
+// ============================================================
+// P0.6: Struct Definition and Field Access
+// ============================================================
+
+struct SourceLoc {
+    line: i64,
+    column: i64,
+}
+
+struct Token {
+    text: string,
+    line: i64,
+    column: i64,
+}
+
+test "P0.6a - struct creation" {
+    var tok: Token = Token{
+        .text = "foo",
+        .line = 1,
+        .column = 5,
+    }
+
+    assert(tok.text == "foo", "tok.text")
+    assert(tok.line == 1, "tok.line")
+    assert(tok.column == 5, "tok.column")
+}
+
+test "P0.6b - struct field modification" {
+    var loc: SourceLoc = SourceLoc{ .line = 1, .column = 1 }
+
+    loc.line = 10
+    loc.column = 25
+
+    assert(loc.line == 10, "modified line")
+    assert(loc.column == 25, "modified column")
+}
+
+// ============================================================
+// P0.7: Array Basics (Fixed Size)
+// ============================================================
+
+test "P0.7a - array literal and indexing" {
+    const arr = [10, 20, 30, 40, 50]
+
+    assert(arr[0] == 10, "arr[0]")
+    assert(arr[1] == 20, "arr[1]")
+    assert(arr[4] == 50, "arr[4]")
+}
+
+test "P0.7b - for-in array iteration" {
+    const arr = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+
+    for n in arr {
+        sum = sum + n
+    }
+
+    assert(sum == 15, "sum should be 15")
+}
+
+// ============================================================
+// P0.8: String Comparison
+// ============================================================
+
+test "P0.8 - string equality" {
+    const a = "hello"
+    const b = "hello"
+    const c = "world"
+
+    assert(a == b, "same strings equal")
+    assert(a != c, "different strings not equal")
+
+    const text = "fn"
+    assert(text == "fn", "text == 'fn'")
+    assert(text != "let", "text != 'let'")
+}
+
+// ============================================================
+// P0.9: Range Iteration
+// ============================================================
+
+test "P0.9 - for-in range" {
+    var sum: i64 = 0
+
+    for i in 0..5 {
+        sum = sum + i
+    }
+
+    assert(sum == 10, "0+1+2+3+4 = 10")
+}
+
+// ============================================================
+// P1.1: String Concatenation
+// ============================================================
+
+test "P1.1 - string concatenation" {
+    const a = "hello"
+    const b = " "
+    const c = "world"
+
+    const result = a + b + c
+    assert(result == "hello world", "concatenation")
+}
+
+// ============================================================
+// P1.2: Function Returning Struct
+// ============================================================
+
+fn make_token(txt: string, ln: i64, col: i64) Token {
+    return Token{
+        .text = txt,
+        .line = ln,
+        .column = col,
+    }
+}
+
+test "P1.2 - function returning struct" {
+    var tok: Token = make_token("42", 5, 10)
+
+    assert(tok.text == "42", "returned text")
+    assert(tok.line == 5, "returned line")
+}
+
+// ============================================================
+// P1.3: Nested Struct Access
+// ============================================================
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Rect {
+    origin: Point,
+    width: i64,
+    height: i64,
+}
+
+test "P1.3 - nested struct field access" {
+    var r: Rect = Rect{
+        .origin = Point{ .x = 10, .y = 20 },
+        .width = 100,
+        .height = 50,
+    }
+
+    assert(r.origin.x == 10, "r.origin.x")
+    assert(r.origin.y == 20, "r.origin.y")
+    assert(r.width == 100, "r.width")
+}

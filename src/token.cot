@@ -1,0 +1,349 @@
+// Token types for the Cot self-hosted compiler
+//
+// This module defines all token types used by the lexer.
+
+// Token types enum - all possible tokens in Cot syntax
+enum TokenType {
+    // Literals
+    Identifier,
+    StringLiteral,
+    IntegerLiteral,
+    DecimalLiteral,
+
+    // Interpolated string tokens
+    StringInterpStart,
+    StringContent,
+    InterpExprStart,
+    InterpExprEnd,
+    StringInterpEnd,
+
+    // Single-character tokens
+    LeftParen,      // (
+    RightParen,     // )
+    LeftBracket,    // [
+    RightBracket,   // ]
+    LeftBrace,      // {
+    RightBrace,     // }
+    Comma,          // ,
+    Dot,            // .
+    Colon,          // :
+    Semicolon,      // ;
+    Plus,           // +
+    Minus,          // -
+    Star,           // *
+    Slash,          // /
+    Hash,           // #
+    HashHash,       // ##
+    Equals,         // =
+    At,             // @
+    Percent,        // %
+    Ampersand,      // &
+    Pipe,           // |
+    Caret,          // ^
+    Tilde,          // ~
+    Bang,           // !
+    Question,       // ?
+
+    // Multi-character tokens
+    Arrow,          // ->
+    FatArrow,       // =>
+    DoubleColon,    // ::
+    Range,          // ..
+    RangeInclusive, // ..=
+    Walrus,         // :=
+    PlusPlus,       // ++
+    PlusEquals,     // +=
+    MinusEquals,    // -=
+    StarEquals,     // *=
+    SlashEquals,    // /=
+    PipeEquals,     // |=
+    AmpEquals,      // &=
+
+    // Null-safety operators
+    QuestionDot,      // ?.
+    QuestionQuestion, // ??
+    QuestionBracket,  // ?[
+
+    // Comparison operators
+    EqualEqual,     // ==
+    BangEqual,      // !=
+    Less,           // <
+    LessEqual,      // <=
+    Greater,        // >
+    GreaterEqual,   // >=
+
+    // Shift operators
+    LessLess,       // <<
+    GreaterGreater, // >>
+
+    // Logical operators
+    AmpAmp,         // &&
+    PipePipe,       // ||
+
+    // Keywords - declarations
+    KwFn,
+    KwStruct,
+    KwUnion,
+    KwView,
+    KwEnum,
+    KwConst,
+    KwVar,
+    KwType,
+    KwImpl,
+    KwTrait,
+    KwDyn,
+    KwPub,
+    KwStatic,
+
+    // Keywords - control flow
+    KwIf,
+    KwElse,
+    KwSwitch,
+    KwFor,
+    KwIn,
+    KwWhile,
+    KwLoop,
+    KwBreak,
+    KwContinue,
+    KwReturn,
+
+    // Keywords - error handling
+    KwTry,
+    KwCatch,
+    KwThrow,
+    KwFinally,
+    KwDefer,
+
+    // Keywords - other
+    KwImport,
+    KwAs,
+    KwIs,
+    KwSelf,
+    KwTrue,
+    KwFalse,
+    KwNull,
+    KwAnd,
+    KwOr,
+    KwNot,
+    KwWeak,
+
+    // Keywords - async
+    KwAsync,
+    KwAwait,
+
+    // Keywords - comptime
+    KwComptime,
+
+    // Keywords - testing
+    KwTest,
+
+    // Special
+    Eof,
+    Invalid,
+    Newline,
+}
+
+// Source location in a file
+struct SourceLoc {
+    line: i64,
+    column: i64,
+}
+
+// Byte span in source code
+struct Span {
+    start: i64,
+    end: i64,
+}
+
+// Create a new span
+fn newSpan(start: i64, end: i64) Span {
+    return Span{ .start = start, .end = end }
+}
+
+impl Span {
+    fn len(self: Span) i64 {
+        return self.end - self.start
+    }
+
+    fn merge(self: Span, other: Span) Span {
+        var min_start: i64 = self.start
+        if (other.start < min_start) {
+            min_start = other.start
+        }
+        var max_end: i64 = self.end
+        if (other.end > max_end) {
+            max_end = other.end
+        }
+        return Span{ .start = min_start, .end = max_end }
+    }
+}
+
+// A token from the source code
+struct Token {
+    token_type: TokenType,
+    lexeme: string,
+    line: i64,
+    column: i64,
+    span: Span,
+}
+
+// Create a new token
+fn newToken(token_type: TokenType, lexeme: string, line: i64, column: i64, start: i64, end: i64) Token {
+    return Token{
+        .token_type = token_type,
+        .lexeme = lexeme,
+        .line = line,
+        .column = column,
+        .span = Span{ .start = start, .end = end },
+    }
+}
+
+// Check if a token type is a keyword
+fn isKeyword(t: TokenType) bool {
+    switch (t) {
+        TokenType.KwFn => { return true }
+        TokenType.KwStruct => { return true }
+        TokenType.KwUnion => { return true }
+        TokenType.KwView => { return true }
+        TokenType.KwEnum => { return true }
+        TokenType.KwConst => { return true }
+        TokenType.KwVar => { return true }
+        TokenType.KwType => { return true }
+        TokenType.KwImpl => { return true }
+        TokenType.KwTrait => { return true }
+        TokenType.KwDyn => { return true }
+        TokenType.KwPub => { return true }
+        TokenType.KwStatic => { return true }
+        TokenType.KwIf => { return true }
+        TokenType.KwElse => { return true }
+        TokenType.KwSwitch => { return true }
+        TokenType.KwFor => { return true }
+        TokenType.KwIn => { return true }
+        TokenType.KwWhile => { return true }
+        TokenType.KwLoop => { return true }
+        TokenType.KwBreak => { return true }
+        TokenType.KwContinue => { return true }
+        TokenType.KwReturn => { return true }
+        TokenType.KwTry => { return true }
+        TokenType.KwCatch => { return true }
+        TokenType.KwThrow => { return true }
+        TokenType.KwFinally => { return true }
+        TokenType.KwDefer => { return true }
+        TokenType.KwImport => { return true }
+        TokenType.KwAs => { return true }
+        TokenType.KwIs => { return true }
+        TokenType.KwSelf => { return true }
+        TokenType.KwTrue => { return true }
+        TokenType.KwFalse => { return true }
+        TokenType.KwNull => { return true }
+        TokenType.KwAnd => { return true }
+        TokenType.KwOr => { return true }
+        TokenType.KwNot => { return true }
+        TokenType.KwWeak => { return true }
+        TokenType.KwAsync => { return true }
+        TokenType.KwAwait => { return true }
+        TokenType.KwComptime => { return true }
+        TokenType.KwTest => { return true }
+        TokenType.Identifier => { return false }
+        TokenType.StringLiteral => { return false }
+        TokenType.IntegerLiteral => { return false }
+        TokenType.DecimalLiteral => { return false }
+        TokenType.StringInterpStart => { return false }
+        TokenType.StringContent => { return false }
+        TokenType.InterpExprStart => { return false }
+        TokenType.InterpExprEnd => { return false }
+        TokenType.StringInterpEnd => { return false }
+        TokenType.LeftParen => { return false }
+        TokenType.RightParen => { return false }
+        TokenType.LeftBracket => { return false }
+        TokenType.RightBracket => { return false }
+        TokenType.LeftBrace => { return false }
+        TokenType.RightBrace => { return false }
+        TokenType.Comma => { return false }
+        TokenType.Dot => { return false }
+        TokenType.Colon => { return false }
+        TokenType.Semicolon => { return false }
+        TokenType.Plus => { return false }
+        TokenType.Minus => { return false }
+        TokenType.Star => { return false }
+        TokenType.Slash => { return false }
+        TokenType.Hash => { return false }
+        TokenType.HashHash => { return false }
+        TokenType.Equals => { return false }
+        TokenType.At => { return false }
+        TokenType.Percent => { return false }
+        TokenType.Ampersand => { return false }
+        TokenType.Pipe => { return false }
+        TokenType.Caret => { return false }
+        TokenType.Tilde => { return false }
+        TokenType.Bang => { return false }
+        TokenType.Question => { return false }
+        TokenType.Arrow => { return false }
+        TokenType.FatArrow => { return false }
+        TokenType.DoubleColon => { return false }
+        TokenType.Range => { return false }
+        TokenType.RangeInclusive => { return false }
+        TokenType.Walrus => { return false }
+        TokenType.PlusPlus => { return false }
+        TokenType.PlusEquals => { return false }
+        TokenType.MinusEquals => { return false }
+        TokenType.StarEquals => { return false }
+        TokenType.SlashEquals => { return false }
+        TokenType.PipeEquals => { return false }
+        TokenType.AmpEquals => { return false }
+        TokenType.QuestionDot => { return false }
+        TokenType.QuestionQuestion => { return false }
+        TokenType.QuestionBracket => { return false }
+        TokenType.EqualEqual => { return false }
+        TokenType.BangEqual => { return false }
+        TokenType.Less => { return false }
+        TokenType.LessEqual => { return false }
+        TokenType.Greater => { return false }
+        TokenType.GreaterEqual => { return false }
+        TokenType.LessLess => { return false }
+        TokenType.GreaterGreater => { return false }
+        TokenType.AmpAmp => { return false }
+        TokenType.PipePipe => { return false }
+        TokenType.Eof => { return false }
+        TokenType.Invalid => { return false }
+        TokenType.Newline => { return false }
+    }
+}
+
+// Check if a token type is an operator
+fn isOperator(t: TokenType) bool {
+    switch (t) {
+        TokenType.Plus => { return true }
+        TokenType.PlusPlus => { return true }
+        TokenType.Minus => { return true }
+        TokenType.Star => { return true }
+        TokenType.Slash => { return true }
+        TokenType.Equals => { return true }
+        TokenType.EqualEqual => { return true }
+        TokenType.BangEqual => { return true }
+        TokenType.Less => { return true }
+        TokenType.LessEqual => { return true }
+        TokenType.Greater => { return true }
+        TokenType.GreaterEqual => { return true }
+        TokenType.AmpAmp => { return true }
+        TokenType.PipePipe => { return true }
+        TokenType.Bang => { return true }
+        TokenType.QuestionDot => { return true }
+        TokenType.QuestionQuestion => { return true }
+        TokenType.QuestionBracket => { return true }
+    }
+    return false
+}
+
+// Check if a token type is a literal
+fn isLiteral(t: TokenType) bool {
+    switch (t) {
+        TokenType.StringLiteral => { return true }
+        TokenType.IntegerLiteral => { return true }
+        TokenType.DecimalLiteral => { return true }
+        TokenType.StringInterpStart => { return true }
+        TokenType.StringContent => { return true }
+        TokenType.StringInterpEnd => { return true }
+    }
+    return false
+}

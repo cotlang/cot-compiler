@@ -1,0 +1,1624 @@
+// Type Checker for the Cot self-hosted compiler
+//
+// Performs semantic analysis:
+// - Type inference and checking
+// - Scope/symbol management
+// - Type resolution (TypeRef -> Type)
+//
+// Uses index-based references since Cot doesn't have heap allocation.
+// Note: Imports commented out - compile with types.cot together or inline dependencies
+
+import "types"
+import "ast"
+import "token"
+
+// =============================================================================
+// Symbol Table Entry
+// =============================================================================
+
+enum SymbolKind {
+    Variable,       // Local or global variable
+    Constant,       // Const binding
+    FunctionDef,    // Function definition
+    StructDef,      // Struct type definition
+    EnumDef,        // Enum type definition
+    EnumVariantDef, // Enum variant (for EnumName.Variant)
+    Parameter,      // Function parameter
+    TypeAliasDef,   // Type alias
+}
+
+struct Symbol {
+    name: string,
+    kind: SymbolKind,
+    type_id: i64,       // Index into TypeRegistry
+    mutable: bool,      // For variables - can be reassigned
+    line: i64,          // Source line for error messages
+    valid: bool,        // Sentinel for lookup results
+}
+
+fn invalidSymbol() Symbol {
+    return Symbol{
+        .name = "",
+        .kind = SymbolKind.Variable,
+        .type_id = -1,
+        .mutable = false,
+        .line = 0,
+        .valid = false,
+    }
+}
+
+// =============================================================================
+// Trait Definitions
+// =============================================================================
+
+// Method signature in a trait
+struct TraitMethodSig {
+    name: string,
+    param_type_ids: List<i64>,
+    return_type_id: i64,
+}
+
+// Trait definition with method signatures
+struct TraitDef {
+    name: string,
+    methods: List<TraitMethodSig>,
+}
+
+fn newTraitDef(name: string) TraitDef {
+    const methods: List<TraitMethodSig> = List.new()
+    return TraitDef{
+        .name = name,
+        .methods = methods,
+    }
+}
+
+// =============================================================================
+// Scope Management
+// =============================================================================
+
+struct Scope {
+    parent_id: i64,     // -1 for no parent
+    symbols: Map<string, Symbol>,
+    return_type_id: i64,    // Expected return type (-1 if not function scope)
+    in_loop: bool,          // For break/continue validation
+}
+
+struct ScopeManager {
+    scopes: List<Scope>,
+    current_id: i64,
+}
+
+fn newScopeManager() ScopeManager {
+    const scopes: List<Scope> = List.new()
+
+    // Create global scope at index 0
+    const symbols: Map<string, Symbol> = Map.new()
+    const global = Scope{
+        .parent_id = -1,
+        .symbols = symbols,
+        .return_type_id = -1,
+        .in_loop = false,
+    }
+    scopes.push(global)
+
+    return ScopeManager{
+        .scopes = scopes,
+        .current_id = 0,
+    }
+}
+
+fn smCurrentScope(sm: ScopeManager) Scope {
+    return sm.scopes.get(sm.current_id)
+}
+
+fn smEnterScope(sm: ScopeManager) i64 {
+    const current = sm.scopes.get(sm.current_id)
+    const symbols: Map<string, Symbol> = Map.new()
+    const new_scope = Scope{
+        .parent_id = sm.current_id,
+        .symbols = symbols,
+        .return_type_id = current.return_type_id,  // Inherit return type
+        .in_loop = current.in_loop,                // Inherit loop context
+    }
+    const new_id = sm.scopes.len()
+    sm.scopes.push(new_scope)
+    sm.current_id = new_id
+    return new_id
+}
+
+fn smEnterFunctionScope(sm: ScopeManager, return_type_id: i64) i64 {
+    const symbols: Map<string, Symbol> = Map.new()
+    const new_scope = Scope{
+        .parent_id = sm.current_id,
+        .symbols = symbols,
+        .return_type_id = return_type_id,
+        .in_loop = false,
+    }
+    const new_id = sm.scopes.len()
+    sm.scopes.push(new_scope)
+    sm.current_id = new_id
+    return new_id
+}
+
+fn smEnterLoopScope(sm: ScopeManager) i64 {
+    const current = sm.scopes.get(sm.current_id)
+    const symbols: Map<string, Symbol> = Map.new()
+    const new_scope = Scope{
+        .parent_id = sm.current_id,
+        .symbols = symbols,
+        .return_type_id = current.return_type_id,
+        .in_loop = true,
+    }
+    const new_id = sm.scopes.len()
+    sm.scopes.push(new_scope)
+    sm.current_id = new_id
+    return new_id
+}
+
+fn smExitScope(sm: ScopeManager) {
+    const current = sm.scopes.get(sm.current_id)
+    if (current.parent_id >= 0) {
+        sm.current_id = current.parent_id
+    }
+}
+
+fn smDefine(sm: ScopeManager, name: string, sym: Symbol) bool {
+    const scope = sm.scopes.get(sm.current_id)
+    if (scope.symbols.has(name)) {
+        return false  // Already defined in this scope
+    }
+    scope.symbols.set(name, sym)
+    return true
+}
+
+fn smLookup(sm: ScopeManager, name: string) Symbol {
+    var scope_id = sm.current_id
+    while (scope_id >= 0) {
+        const scope = sm.scopes.get(scope_id)
+        if (scope.symbols.has(name)) {
+            var sym = scope.symbols.get(name)
+            sym.valid = true
+            return sym
+        }
+        scope_id = scope.parent_id
+    }
+    return invalidSymbol()
+}
+
+fn smLookupLocal(sm: ScopeManager, name: string) Symbol {
+    const scope = sm.scopes.get(sm.current_id)
+    if (scope.symbols.has(name)) {
+        var sym = scope.symbols.get(name)
+        sym.valid = true
+        return sym
+    }
+    return invalidSymbol()
+}
+
+fn smInLoop(sm: ScopeManager) bool {
+    return sm.scopes.get(sm.current_id).in_loop
+}
+
+fn smReturnTypeId(sm: ScopeManager) i64 {
+    return sm.scopes.get(sm.current_id).return_type_id
+}
+
+// =============================================================================
+// Type Checker State
+// =============================================================================
+
+struct TypeChecker {
+    // Type registry (from types.cot)
+    reg: TypeRegistry,
+
+    // Scope management
+    scopes: ScopeManager,
+
+    // User-defined types by name -> type ID
+    struct_types: Map<string, i64>,
+    enum_types: Map<string, i64>,
+
+    // Trait definitions by name
+    traits: Map<string, TraitDef>,
+
+    // Error tracking
+    errors: List<string>,
+    had_error: bool,
+}
+
+fn newTypeChecker() TypeChecker {
+    const reg = newTypeRegistry()
+    const scopes = newScopeManager()
+    const struct_types: Map<string, i64> = Map.new()
+    const enum_types: Map<string, i64> = Map.new()
+    const traits: Map<string, TraitDef> = Map.new()
+    const errors: List<string> = List.new()
+
+    return TypeChecker{
+        .reg = reg,
+        .scopes = scopes,
+        .struct_types = struct_types,
+        .enum_types = enum_types,
+        .traits = traits,
+        .errors = errors,
+        .had_error = false,
+    }
+}
+
+// =============================================================================
+// Error Reporting
+// =============================================================================
+
+fn tcError(tc: TypeChecker, line: i64, message: string) {
+    const err = "Error at line ${line}: ${message}"
+    tc.errors.push(err)
+    tc.had_error = true
+}
+
+// =============================================================================
+// Type Resolution (TypeRef -> Type ID)
+// =============================================================================
+
+fn tcResolveType(tc: TypeChecker, type_ref: TypeRef) i64 {
+    if (type_ref.kind == TypeKind.Named) {
+        return tcResolveNamedType(tc, type_ref.name)
+    }
+    if (type_ref.kind == TypeKind.Pointer) {
+        if (type_ref.inner != null) {
+            const inner_id = tcResolveType(tc, type_ref.inner.*)
+            return regAddPointerType(tc.reg, inner_id)
+        }
+        return tc.reg.error_id
+    }
+    if (type_ref.kind == TypeKind.Optional) {
+        if (type_ref.inner != null) {
+            const inner_id = tcResolveType(tc, type_ref.inner.*)
+            return regAddOptionalType(tc.reg, inner_id)
+        }
+        return tc.reg.error_id
+    }
+    if (type_ref.kind == TypeKind.Array) {
+        if (type_ref.inner != null) {
+            const inner_id = tcResolveType(tc, type_ref.inner.*)
+            return regAddArrayType(tc.reg, inner_id, type_ref.array_size)
+        }
+        return tc.reg.error_id
+    }
+    if (type_ref.kind == TypeKind.Slice) {
+        if (type_ref.inner != null) {
+            const inner_id = tcResolveType(tc, type_ref.inner.*)
+            return regAddSliceType(tc.reg, inner_id)
+        }
+        return tc.reg.error_id
+    }
+    if (type_ref.kind == TypeKind.Function) {
+        const param_ids: List<i64> = List.new()
+        var i: i64 = 0
+        while (i < len(type_ref.param_types)) {
+            param_ids.push(tcResolveType(tc, type_ref.param_types[i].*))
+            i = i + 1
+        }
+        var return_id = tc.reg.void_id
+        if (type_ref.return_type != null) {
+            return_id = tcResolveType(tc, type_ref.return_type.*)
+        }
+        return regAddFunctionType(tc.reg, param_ids, return_id)
+    }
+    if (type_ref.kind == TypeKind.Generic) {
+        return tcResolveGenericType(tc, type_ref)
+    }
+    if (type_ref.kind == TypeKind.Inferred) {
+        return tc.reg.error_id
+    }
+    return tc.reg.error_id
+}
+
+fn tcResolveNamedType(tc: TypeChecker, name: string) i64 {
+    // Check primitives
+    if (name == "void") { return tc.reg.void_id }
+    if (name == "bool") { return tc.reg.bool_id }
+    if (name == "i8") { return tc.reg.i8_id }
+    if (name == "i16") { return tc.reg.i16_id }
+    if (name == "i32") { return tc.reg.i32_id }
+    if (name == "i64") { return tc.reg.i64_id }
+    if (name == "u8") { return tc.reg.u8_id }
+    if (name == "u16") { return tc.reg.u16_id }
+    if (name == "u32") { return tc.reg.u32_id }
+    if (name == "u64") { return tc.reg.u64_id }
+    if (name == "f32") { return tc.reg.f32_id }
+    if (name == "f64") { return tc.reg.f64_id }
+    if (name == "string") { return tc.reg.string_id }
+    if (name == "char") { return tc.reg.char_id }
+
+    // Check user-defined types
+    if (tc.struct_types.has(name)) {
+        return tc.struct_types.get(name)
+    }
+    if (tc.enum_types.has(name)) {
+        return tc.enum_types.get(name)
+    }
+
+    // Unknown type
+    return tc.reg.error_id
+}
+
+fn tcResolveGenericType(tc: TypeChecker, type_ref: TypeRef) i64 {
+    // Get the base type name (e.g., "List" from "List[i64]")
+    const base_name = type_ref.name
+
+    // Resolve all type arguments
+    const arg_ids: List<i64> = List.new()
+    var i: i64 = 0
+    while (i < len(type_ref.type_args)) {
+        const arg_ref = type_ref.type_args[i]
+        const arg_id = tcResolveType(tc, arg_ref.*)
+        arg_ids.push(arg_id)
+        i = i + 1
+    }
+
+    // If no type arguments, this might be a generic definition being referenced
+    if (arg_ids.len() == 0) {
+        // Check if it's a registered generic definition
+        if (tc.reg.generic_defs.has(base_name)) {
+            return tc.reg.generic_defs.get(base_name)
+        }
+        // Otherwise treat as a named type
+        return tcResolveNamedType(tc, base_name)
+    }
+
+    // Create or retrieve a cached generic instance
+    return regAddGenericInstance(tc.reg, base_name, arg_ids)
+}
+
+// =============================================================================
+// Declaration Checking (First Pass - Collect Type Definitions)
+// =============================================================================
+
+fn tcCollectDeclarations(tc: TypeChecker, stmts: []Stmt) {
+    var i: i64 = 0
+    while (i < len(stmts)) {
+        const stmt = stmts[i]
+        if (stmt.kind == StmtKind.StructDecl) {
+            tcCollectStructDecl(tc, stmt)
+        } else if (stmt.kind == StmtKind.EnumDecl) {
+            tcCollectEnumDecl(tc, stmt)
+        } else if (stmt.kind == StmtKind.FunctionDecl) {
+            tcCollectFunctionDecl(tc, stmt)
+        } else if (stmt.kind == StmtKind.UnionDecl) {
+            tcCollectUnionDecl(tc, stmt)
+        } else if (stmt.kind == StmtKind.TraitDecl) {
+            tcCollectTraitDecl(tc, stmt)
+        } else if (stmt.kind == StmtKind.TypeAliasDecl) {
+            tcCollectTypeAliasDecl(tc, stmt)
+        }
+        i = i + 1
+    }
+}
+
+fn tcCollectStructDecl(tc: TypeChecker, stmt: Stmt) {
+    const name = stmt.struct_name
+
+    // Check for redefinition
+    if (tc.struct_types.has(name)) {
+        tcError(tc, stmt.loc.line, "Struct '${name}' already defined")
+        return
+    }
+
+    // Create struct type
+    const struct_id = regAddStructType(tc.reg, name)
+    tc.struct_types.set(name, struct_id)
+
+    // Resolve and add fields
+    const struct_type = regGetType(tc.reg, struct_id)
+    var i: i64 = 0
+    while (i < len(stmt.struct_fields)) {
+        const field = stmt.struct_fields[i]
+        var field_type_id = tc.reg.error_id
+        if (field.field_type != null) {
+            field_type_id = tcResolveType(tc, field.field_type.*)
+        }
+
+        const tf = TypeField{
+            .name = field.name,
+            .field_type_id = field_type_id,
+            .offset = i,
+        }
+        struct_type.struct_fields.push(tf)
+        i = i + 1
+    }
+
+    // Register in global scope
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.StructDef,
+        .type_id = struct_id,
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, name, sym)
+}
+
+fn tcCollectEnumDecl(tc: TypeChecker, stmt: Stmt) {
+    const name = stmt.enum_name
+
+    // Check for redefinition
+    if (tc.enum_types.has(name)) {
+        tcError(tc, stmt.loc.line, "Enum '${name}' already defined")
+        return
+    }
+
+    // Create enum type
+    const enum_id = regAddEnumType(tc.reg, name)
+    tc.enum_types.set(name, enum_id)
+
+    // Resolve and add variants
+    const enum_type = regGetType(tc.reg, enum_id)
+    var i: i64 = 0
+    while (i < len(stmt.enum_variants)) {
+        const variant = stmt.enum_variants[i]
+        const tv = TypeVariant{
+            .name = variant.name,
+            .value = i,
+            .payload_type_id = -1,  // No payload for now
+        }
+        enum_type.enum_variants.push(tv)
+
+        // Register variant as EnumName.Variant
+        const variant_sym = Symbol{
+            .name = "${name}.${variant.name}",
+            .kind = SymbolKind.EnumVariantDef,
+            .type_id = enum_id,
+            .mutable = false,
+            .line = variant.loc.line,
+            .valid = true,
+        }
+        smDefine(tc.scopes, "${name}.${variant.name}", variant_sym)
+
+        i = i + 1
+    }
+
+    // Register in global scope
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.EnumDef,
+        .type_id = enum_id,
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, name, sym)
+}
+
+fn tcCollectFunctionDecl(tc: TypeChecker, stmt: Stmt) {
+    const name = stmt.fn_name
+
+    // Build function type
+    const param_ids: List<i64> = List.new()
+    var i: i64 = 0
+    while (i < len(stmt.fn_params)) {
+        const param = stmt.fn_params[i]
+        var param_type_id = tc.reg.error_id
+        if (param.param_type != null) {
+            param_type_id = tcResolveType(tc, param.param_type.*)
+        }
+        param_ids.push(param_type_id)
+        i = i + 1
+    }
+
+    var return_id = tc.reg.void_id
+    if (stmt.fn_return_type != null) {
+        return_id = tcResolveType(tc, stmt.fn_return_type.*)
+    }
+
+    const fn_type_id = regAddFunctionType(tc.reg, param_ids, return_id)
+
+    // Register in global scope
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.FunctionDef,
+        .type_id = fn_type_id,
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+
+    if (not smDefine(tc.scopes, name, sym)) {
+        tcError(tc, stmt.loc.line, "Function '${name}' already defined")
+    }
+}
+
+fn tcCollectUnionDecl(tc: TypeChecker, stmt: Stmt) {
+    const name = stmt.union_name
+
+    // Check for redefinition
+    if (tc.struct_types.has(name)) {
+        tcError(tc, stmt.loc.line, "Union '${name}' already defined")
+        return
+    }
+
+    // Create union type (use struct type internally, all fields share memory)
+    const union_id = regAddStructType(tc.reg, name)
+    tc.struct_types.set(name, union_id)
+
+    // Resolve and add fields
+    const union_type = regGetType(tc.reg, union_id)
+    var i: i64 = 0
+    while (i < len(stmt.union_fields)) {
+        const field = stmt.union_fields[i]
+        var field_type_id = tc.reg.error_id
+        if (field.field_type != null) {
+            field_type_id = tcResolveType(tc, field.field_type.*)
+        }
+
+        const tf = TypeField{
+            .name = field.name,
+            .field_type_id = field_type_id,
+            .offset = 0,  // All union fields share offset 0
+        }
+        union_type.struct_fields.push(tf)
+        i = i + 1
+    }
+
+    // Register in global scope
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.StructDef,  // Treat unions as structs
+        .type_id = union_id,
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, name, sym)
+}
+
+fn tcCollectTraitDecl(tc: TypeChecker, stmt: Stmt) {
+    const name = stmt.trait_name
+
+    // Check for redefinition
+    if (tc.traits.has(name)) {
+        tcError(tc, stmt.loc.line, "Trait '${name}' already defined")
+        return
+    }
+
+    // Create trait definition and collect method signatures
+    var trait_def = newTraitDef(name)
+
+    // Collect method signatures from trait methods
+    var i: i64 = 0
+    while (i < len(stmt.trait_methods)) {
+        const method = stmt.trait_methods[i]
+        if (method.kind == StmtKind.FunctionDecl) {
+            // Build parameter type IDs
+            const param_ids: List<i64> = List.new()
+            var j: i64 = 0
+            while (j < len(method.fn_params)) {
+                const param = method.fn_params[j]
+                var param_type_id = tc.reg.error_id
+                if (param.param_type != null) {
+                    param_type_id = tcResolveType(tc, param.param_type.*)
+                }
+                param_ids.push(param_type_id)
+                j = j + 1
+            }
+
+            // Get return type
+            var return_type_id = tc.reg.void_id
+            if (method.fn_return_type != null) {
+                return_type_id = tcResolveType(tc, method.fn_return_type.*)
+            }
+
+            // Add method signature
+            const sig = TraitMethodSig{
+                .name = method.fn_name,
+                .param_type_ids = param_ids,
+                .return_type_id = return_type_id,
+            }
+            trait_def.methods.push(sig)
+        }
+        i = i + 1
+    }
+
+    // Store trait definition
+    tc.traits.set(name, trait_def)
+
+    // Register trait name in symbol table
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.StructDef,  // Treat traits as types
+        .type_id = tc.reg.void_id,     // Placeholder type
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, name, sym)
+}
+
+fn tcCollectTypeAliasDecl(tc: TypeChecker, stmt: Stmt) {
+    const name = stmt.alias_name
+
+    // Resolve the aliased type
+    var aliased_type_id = tc.reg.error_id
+    if (stmt.alias_type != null) {
+        aliased_type_id = tcResolveType(tc, stmt.alias_type.*)
+    }
+
+    // Register the alias in symbol table
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.TypeAliasDef,
+        .type_id = aliased_type_id,
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, name, sym)
+
+    // Also register in struct_types map so it can be resolved as a type
+    tc.struct_types.set(name, aliased_type_id)
+}
+
+// =============================================================================
+// Statement Checking
+// =============================================================================
+
+fn tcCheckStatement(tc: TypeChecker, stmt: Stmt) {
+    if (stmt.kind == StmtKind.ExpressionStmt) {
+        if (stmt.expr != null) {
+            tcCheckExpr(tc, stmt.expr.*)
+        }
+    } else if (stmt.kind == StmtKind.VarDecl) {
+        tcCheckVarDecl(tc, stmt, true)
+    } else if (stmt.kind == StmtKind.ConstDecl) {
+        tcCheckVarDecl(tc, stmt, false)
+    } else if (stmt.kind == StmtKind.ReturnStmt) {
+        tcCheckReturnStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.IfStmt) {
+        tcCheckIfStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.WhileStmt) {
+        tcCheckWhileStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.ForStmt) {
+        tcCheckForStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.BlockStmt) {
+        tcCheckBlockStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.FunctionDecl) {
+        tcCheckFunctionDecl(tc, stmt)
+    } else if (stmt.kind == StmtKind.BreakStmt) {
+        if (not smInLoop(tc.scopes)) {
+            tcError(tc, stmt.loc.line, "'break' outside of loop")
+        }
+    } else if (stmt.kind == StmtKind.ContinueStmt) {
+        if (not smInLoop(tc.scopes)) {
+            tcError(tc, stmt.loc.line, "'continue' outside of loop")
+        }
+    } else if (stmt.kind == StmtKind.SwitchStmt) {
+        tcCheckSwitchStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.ImplDecl) {
+        tcCheckImplDecl(tc, stmt)
+    } else if (stmt.kind == StmtKind.LoopStmt) {
+        tcCheckLoopStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.DeferStmt) {
+        tcCheckDeferStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.TryStmt) {
+        tcCheckTryStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.ThrowStmt) {
+        tcCheckThrowStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.TestDecl) {
+        tcCheckTestDecl(tc, stmt)
+    } else if (stmt.kind == StmtKind.ViewDecl) {
+        tcCheckViewDecl(tc, stmt)
+    } else if (stmt.kind == StmtKind.ComptimeStmt) {
+        tcCheckComptimeStmt(tc, stmt)
+    } else if (stmt.kind == StmtKind.ImportStmt) {
+        // Import statements are handled at module level, not type checked here
+    }
+    // StructDecl, EnumDecl, UnionDecl, TraitDecl, TypeAliasDecl handled in first pass
+}
+
+fn tcCheckVarDecl(tc: TypeChecker, stmt: Stmt, mutable: bool) {
+    const name = stmt.var_name
+
+    // Check for redefinition in current scope
+    if (smLookupLocal(tc.scopes, name).valid) {
+        tcError(tc, stmt.loc.line, "Variable '${name}' already defined in this scope")
+        return
+    }
+
+    // Resolve declared type (if any)
+    var declared_type_id: i64 = -1
+    if (stmt.var_type != null) {
+        declared_type_id = tcResolveType(tc, stmt.var_type.*)
+    }
+
+    // Check initializer
+    var init_type_id = tc.reg.error_id
+    if (stmt.var_init != null) {
+        init_type_id = tcCheckExpr(tc, stmt.var_init.*)
+    }
+
+    // Determine final type
+    var final_type_id = tc.reg.error_id
+    if (declared_type_id >= 0) {
+        final_type_id = declared_type_id
+        // Check assignment compatibility
+        if (stmt.var_init != null and not isErrorTypeId(tc.reg, init_type_id)) {
+            if (not isAssignableToById(tc.reg, init_type_id, declared_type_id)) {
+                tcError(tc, stmt.loc.line, "Cannot assign ${typeToString(tc.reg, init_type_id)} to variable of type ${typeToString(tc.reg, declared_type_id)}")
+            }
+        }
+    } else if (stmt.var_init != null) {
+        // Type inference
+        final_type_id = init_type_id
+    } else {
+        tcError(tc, stmt.loc.line, "Variable '${name}' requires type annotation or initializer")
+    }
+
+    // Register variable
+    const sym = Symbol{
+        .name = name,
+        .kind = SymbolKind.Variable,
+        .type_id = final_type_id,
+        .mutable = mutable,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, name, sym)
+}
+
+fn tcCheckReturnStmt(tc: TypeChecker, stmt: Stmt) {
+    // Find expected return type from enclosing function scope
+    const expected_id = smReturnTypeId(tc.scopes)
+
+    if (stmt.return_value != null) {
+        const actual_id = tcCheckExpr(tc, stmt.return_value.*)
+        if (not isAssignableToById(tc.reg, actual_id, expected_id)) {
+            tcError(tc, stmt.loc.line, "Return type mismatch: expected ${typeToString(tc.reg, expected_id)}, got ${typeToString(tc.reg, actual_id)}")
+        }
+    } else {
+        if (expected_id != tc.reg.void_id) {
+            tcError(tc, stmt.loc.line, "Return statement requires value of type ${typeToString(tc.reg, expected_id)}")
+        }
+    }
+}
+
+fn tcCheckIfStmt(tc: TypeChecker, stmt: Stmt) {
+    // Check condition
+    if (stmt.if_cond != null) {
+        const cond_type_id = tcCheckExpr(tc, stmt.if_cond.*)
+        if (cond_type_id != tc.reg.bool_id and not isErrorTypeId(tc.reg, cond_type_id)) {
+            tcError(tc, stmt.loc.line, "If condition must be bool, got ${typeToString(tc.reg, cond_type_id)}")
+        }
+    }
+
+    // Check then branch
+    if (stmt.if_then != null) {
+        smEnterScope(tc.scopes)
+        tcCheckStatement(tc, stmt.if_then.*)
+        smExitScope(tc.scopes)
+    }
+
+    // Check else branch
+    if (stmt.if_else != null) {
+        smEnterScope(tc.scopes)
+        tcCheckStatement(tc, stmt.if_else.*)
+        smExitScope(tc.scopes)
+    }
+}
+
+fn tcCheckWhileStmt(tc: TypeChecker, stmt: Stmt) {
+    // Check condition
+    if (stmt.while_cond != null) {
+        const cond_type_id = tcCheckExpr(tc, stmt.while_cond.*)
+        if (cond_type_id != tc.reg.bool_id and not isErrorTypeId(tc.reg, cond_type_id)) {
+            tcError(tc, stmt.loc.line, "While condition must be bool, got ${typeToString(tc.reg, cond_type_id)}")
+        }
+    }
+
+    // Check body in loop scope
+    if (stmt.while_body != null) {
+        smEnterLoopScope(tc.scopes)
+        tcCheckStatement(tc, stmt.while_body.*)
+        smExitScope(tc.scopes)
+    }
+}
+
+fn tcCheckForStmt(tc: TypeChecker, stmt: Stmt) {
+    smEnterLoopScope(tc.scopes)
+
+    // Check iterator expression
+    var element_type_id = tc.reg.error_id
+    if (stmt.for_iter != null) {
+        const iter_type_id = tcCheckExpr(tc, stmt.for_iter.*)
+        const iter_type = regGetType(tc.reg, iter_type_id)
+
+        // Infer element type from slice/array
+        if (iter_type.tag == TypeTag.Slice or iter_type.tag == TypeTag.Array) {
+            if (iter_type.element_type_id >= 0) {
+                element_type_id = iter_type.element_type_id
+            }
+        } else if (not isErrorTypeId(tc.reg, iter_type_id)) {
+            tcError(tc, stmt.loc.line, "For loop requires iterable, got ${typeToString(tc.reg, iter_type_id)}")
+        }
+    }
+
+    // Register loop variable
+    const sym = Symbol{
+        .name = stmt.for_var,
+        .kind = SymbolKind.Variable,
+        .type_id = element_type_id,
+        .mutable = false,
+        .line = stmt.loc.line,
+        .valid = true,
+    }
+    smDefine(tc.scopes, stmt.for_var, sym)
+
+    // Check body
+    if (stmt.for_body != null) {
+        tcCheckStatement(tc, stmt.for_body.*)
+    }
+
+    smExitScope(tc.scopes)
+}
+
+fn tcCheckBlockStmt(tc: TypeChecker, stmt: Stmt) {
+    smEnterScope(tc.scopes)
+
+    var i: i64 = 0
+    while (i < len(stmt.block_stmts)) {
+        tcCheckStatement(tc, stmt.block_stmts[i].*)
+        i = i + 1
+    }
+
+    smExitScope(tc.scopes)
+}
+
+fn tcCheckFunctionDecl(tc: TypeChecker, stmt: Stmt) {
+    // Get function type (already registered)
+    const fn_sym = smLookup(tc.scopes, stmt.fn_name)
+    if (not fn_sym.valid) {
+        return  // Error already reported
+    }
+
+    const fn_type_id = fn_sym.type_id
+    const fn_type = regGetType(tc.reg, fn_type_id)
+    const return_id = fn_type.fn_return_id
+
+    // Enter function scope
+    smEnterFunctionScope(tc.scopes, return_id)
+
+    // Register parameters
+    var i: i64 = 0
+    while (i < len(stmt.fn_params)) {
+        const param = stmt.fn_params[i]
+        var param_type_id = tc.reg.error_id
+        if (i < fn_type.fn_param_ids.len()) {
+            param_type_id = fn_type.fn_param_ids.get(i)
+        }
+
+        const sym = Symbol{
+            .name = param.name,
+            .kind = SymbolKind.Parameter,
+            .type_id = param_type_id,
+            .mutable = false,
+            .line = param.loc.line,
+            .valid = true,
+        }
+        smDefine(tc.scopes, param.name, sym)
+        i = i + 1
+    }
+
+    // Check body
+    if (stmt.fn_body != null) {
+        tcCheckStatement(tc, stmt.fn_body.*)
+    }
+
+    smExitScope(tc.scopes)
+}
+
+fn tcCheckSwitchStmt(tc: TypeChecker, stmt: Stmt) {
+    // Check switch expression
+    var switch_type_id = tc.reg.error_id
+    if (stmt.switch_expr != null) {
+        switch_type_id = tcCheckExpr(tc, stmt.switch_expr.*)
+    }
+
+    // Check arms
+    var has_default = false
+    var i: i64 = 0
+    while (i < len(stmt.switch_arms)) {
+        const arm = stmt.switch_arms[i]
+
+        if (arm.is_default) {
+            if (has_default) {
+                tcError(tc, arm.loc.line, "Multiple default arms in switch")
+            }
+            has_default = true
+        } else if (arm.pattern != null) {
+            const pattern_type_id = tcCheckExpr(tc, arm.pattern.*)
+            if (not isAssignableToById(tc.reg, pattern_type_id, switch_type_id) and not isErrorTypeId(tc.reg, pattern_type_id)) {
+                tcError(tc, arm.loc.line, "Pattern type ${typeToString(tc.reg, pattern_type_id)} does not match switch type ${typeToString(tc.reg, switch_type_id)}")
+            }
+        }
+
+        // Check arm body
+        if (arm.body != null) {
+            smEnterScope(tc.scopes)
+            tcCheckExpr(tc, arm.body.*)
+            smExitScope(tc.scopes)
+        }
+
+        i = i + 1
+    }
+}
+
+fn tcCheckImplDecl(tc: TypeChecker, stmt: Stmt) {
+    // Resolve the target type
+    var target_type_id = tc.reg.error_id
+    if (stmt.impl_type != null) {
+        target_type_id = tcResolveType(tc, stmt.impl_type.*)
+    }
+
+    if (isErrorTypeId(tc.reg, target_type_id)) {
+        tcError(tc, stmt.loc.line, "Unknown type in impl block")
+        return
+    }
+
+    // Check if this is a trait implementation
+    var trait_name = ""
+    if (stmt.impl_trait != null) {
+        const trait_ref = stmt.impl_trait.*
+        trait_name = trait_ref.name
+    }
+
+    // Check each method
+    var i: i64 = 0
+    while (i < len(stmt.impl_methods)) {
+        const method = stmt.impl_methods[i]
+        tcCheckFunctionDecl(tc, method.*)
+        i = i + 1
+    }
+
+    // If implementing a trait, validate all required methods are present
+    if (trait_name != "" and tc.traits.has(trait_name)) {
+        const trait_def = tc.traits.get(trait_name)
+        tcValidateTraitImpl(tc, stmt, trait_def)
+    }
+}
+
+// Validate that an impl block satisfies all trait method requirements
+fn tcValidateTraitImpl(tc: TypeChecker, stmt: Stmt, trait_def: TraitDef) {
+    // Build a map of implemented method names
+    const impl_methods: Map<string, bool> = Map.new()
+    var i: i64 = 0
+    while (i < len(stmt.impl_methods)) {
+        const method = stmt.impl_methods[i]
+        impl_methods.set(method.fn_name, true)
+        i = i + 1
+    }
+
+    // Check each required trait method
+    var j: i64 = 0
+    while (j < trait_def.methods.len()) {
+        const trait_method = trait_def.methods.get(j)
+        if (not impl_methods.has(trait_method.name)) {
+            tcError(tc, stmt.loc.line, "Missing implementation of '${trait_method.name}' required by trait '${trait_def.name}'")
+        }
+        j = j + 1
+    }
+
+    // Optionally: Check method signatures match (param types and return type)
+    // This is a more thorough check - for now we just verify presence
+}
+
+// =============================================================================
+// Expression Checking
+// =============================================================================
+
+fn tcCheckExpr(tc: TypeChecker, expr: Expr) i64 {
+    if (expr.kind == ExprKind.IntLiteral) {
+        return tc.reg.i64_id
+    }
+    if (expr.kind == ExprKind.DecLiteral) {
+        return tc.reg.f64_id
+    }
+    if (expr.kind == ExprKind.StrLiteral) {
+        return tc.reg.string_id
+    }
+    if (expr.kind == ExprKind.BoolLiteral) {
+        return tc.reg.bool_id
+    }
+    if (expr.kind == ExprKind.NullLiteral) {
+        return regAddOptionalType(tc.reg, tc.reg.void_id)
+    }
+    if (expr.kind == ExprKind.IdentifierExpr) {
+        return tcCheckIdentifier(tc, expr)
+    }
+    if (expr.kind == ExprKind.BinaryExpr) {
+        return tcCheckBinaryExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.UnaryExpr) {
+        return tcCheckUnaryExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.CallExpr) {
+        return tcCheckCallExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.FieldExpr) {
+        return tcCheckFieldExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.IndexExpr) {
+        return tcCheckIndexExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.StructInitExpr) {
+        return tcCheckStructInit(tc, expr)
+    }
+    if (expr.kind == ExprKind.ArrayInitExpr) {
+        return tcCheckArrayInit(tc, expr)
+    }
+
+    tcError(tc, expr.loc.line, "Unhandled expression kind")
+    return tc.reg.error_id
+}
+
+fn tcCheckIdentifier(tc: TypeChecker, expr: Expr) i64 {
+    const name = expr.name
+
+    // Look up in scope chain
+    const sym = smLookup(tc.scopes, name)
+    if (not sym.valid) {
+        // Check for enum type
+        if (tc.enum_types.has(name)) {
+            return tc.enum_types.get(name)
+        }
+
+        tcError(tc, expr.loc.line, "Undefined identifier '${name}'")
+        return tc.reg.error_id
+    }
+
+    return sym.type_id
+}
+
+fn tcCheckBinaryExpr(tc: TypeChecker, expr: Expr) i64 {
+    var left_id = tc.reg.error_id
+    var right_id = tc.reg.error_id
+
+    if (expr.left != null) {
+        left_id = tcCheckExpr(tc, expr.left.*)
+    }
+    if (expr.right != null) {
+        right_id = tcCheckExpr(tc, expr.right.*)
+    }
+
+    // Handle error propagation
+    if (isErrorTypeId(tc.reg, left_id) or isErrorTypeId(tc.reg, right_id)) {
+        return tc.reg.error_id
+    }
+
+    const left_type = regGetType(tc.reg, left_id)
+    const right_type = regGetType(tc.reg, right_id)
+
+    // Arithmetic: +, -, *, /, %
+    if (expr.op == TokenType.Plus) {
+        // String concatenation
+        if (left_id == tc.reg.string_id and right_id == tc.reg.string_id) {
+            return tc.reg.string_id
+        }
+        // Numeric addition
+        if (isNumericType(left_type) and isNumericType(right_type)) {
+            return tcNumericPromotion(tc, left_type, right_type)
+        }
+        tcError(tc, expr.loc.line, "Cannot add ${typeToString(tc.reg, left_id)} and ${typeToString(tc.reg, right_id)}")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Minus) {
+        if (isNumericType(left_type) and isNumericType(right_type)) {
+            return tcNumericPromotion(tc, left_type, right_type)
+        }
+        tcError(tc, expr.loc.line, "Cannot subtract non-numeric types")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Star) {
+        if (isNumericType(left_type) and isNumericType(right_type)) {
+            return tcNumericPromotion(tc, left_type, right_type)
+        }
+        tcError(tc, expr.loc.line, "Cannot multiply non-numeric types")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Slash) {
+        if (isNumericType(left_type) and isNumericType(right_type)) {
+            return tcNumericPromotion(tc, left_type, right_type)
+        }
+        tcError(tc, expr.loc.line, "Cannot divide non-numeric types")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Percent) {
+        if (isIntegerType(left_type) and isIntegerType(right_type)) {
+            return tcNumericPromotion(tc, left_type, right_type)
+        }
+        tcError(tc, expr.loc.line, "Modulo requires integer types")
+        return tc.reg.error_id
+    }
+
+    // Comparison: ==, !=, <, <=, >, >=
+    if (expr.op == TokenType.EqualEqual or expr.op == TokenType.BangEqual) {
+        if (typesEqualById(tc.reg, left_id, right_id) or isAssignableToById(tc.reg, left_id, right_id)) {
+            return tc.reg.bool_id
+        }
+        tcError(tc, expr.loc.line, "Cannot compare ${typeToString(tc.reg, left_id)} with ${typeToString(tc.reg, right_id)}")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Less or expr.op == TokenType.LessEqual or
+        expr.op == TokenType.Greater or expr.op == TokenType.GreaterEqual) {
+        if (isNumericType(left_type) and isNumericType(right_type)) {
+            return tc.reg.bool_id
+        }
+        tcError(tc, expr.loc.line, "Comparison requires numeric types")
+        return tc.reg.error_id
+    }
+
+    // Logical: and, or
+    if (expr.op == TokenType.KwAnd or expr.op == TokenType.KwOr) {
+        if (left_id == tc.reg.bool_id and right_id == tc.reg.bool_id) {
+            return tc.reg.bool_id
+        }
+        tcError(tc, expr.loc.line, "'and'/'or' requires bool operands")
+        return tc.reg.error_id
+    }
+
+    // Assignment: =
+    if (expr.op == TokenType.Equals) {
+        if (not isAssignableToById(tc.reg, right_id, left_id)) {
+            tcError(tc, expr.loc.line, "Cannot assign ${typeToString(tc.reg, right_id)} to ${typeToString(tc.reg, left_id)}")
+        }
+        return left_id
+    }
+
+    tcError(tc, expr.loc.line, "Unknown binary operator")
+    return tc.reg.error_id
+}
+
+fn tcCheckUnaryExpr(tc: TypeChecker, expr: Expr) i64 {
+    var operand_id = tc.reg.error_id
+    if (expr.operand != null) {
+        operand_id = tcCheckExpr(tc, expr.operand.*)
+    }
+
+    if (isErrorTypeId(tc.reg, operand_id)) {
+        return tc.reg.error_id
+    }
+
+    const operand_type = regGetType(tc.reg, operand_id)
+
+    if (expr.op == TokenType.Minus) {
+        if (isNumericType(operand_type)) {
+            return operand_id
+        }
+        tcError(tc, expr.loc.line, "Cannot negate non-numeric type")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Bang) {
+        if (operand_id == tc.reg.bool_id) {
+            return tc.reg.bool_id
+        }
+        tcError(tc, expr.loc.line, "'not' requires bool operand")
+        return tc.reg.error_id
+    }
+    if (expr.op == TokenType.Ampersand) {
+        return regAddPointerType(tc.reg, operand_id)
+    }
+    if (expr.op == TokenType.Star) {
+        if (operand_type.tag == TypeTag.Pointer and operand_type.element_type_id >= 0) {
+            return operand_type.element_type_id
+        }
+        tcError(tc, expr.loc.line, "Cannot dereference non-pointer type")
+        return tc.reg.error_id
+    }
+
+    tcError(tc, expr.loc.line, "Unknown unary operator")
+    return tc.reg.error_id
+}
+
+fn tcCheckCallExpr(tc: TypeChecker, expr: Expr) i64 {
+    if (expr.callee == null) {
+        return tc.reg.error_id
+    }
+
+    const callee_id = tcCheckExpr(tc, expr.callee.*)
+
+    if (isErrorTypeId(tc.reg, callee_id)) {
+        return tc.reg.error_id
+    }
+
+    const callee_type = regGetType(tc.reg, callee_id)
+
+    if (callee_type.tag != TypeTag.FunctionType) {
+        tcError(tc, expr.loc.line, "Cannot call non-function type ${typeToString(tc.reg, callee_id)}")
+        return tc.reg.error_id
+    }
+
+    // Check argument count
+    const expected_count = callee_type.fn_param_ids.len()
+    const actual_count = len(expr.args)
+
+    if (actual_count != expected_count and not callee_type.fn_variadic) {
+        tcError(tc, expr.loc.line, "Expected ${expected_count} arguments, got ${actual_count}")
+    }
+
+    // Check argument types
+    var i: i64 = 0
+    while (i < actual_count and i < expected_count) {
+        const arg_id = tcCheckExpr(tc, expr.args[i].*)
+        const param_id = callee_type.fn_param_ids.get(i)
+        if (not isAssignableToById(tc.reg, arg_id, param_id) and not isErrorTypeId(tc.reg, arg_id)) {
+            tcError(tc, expr.loc.line, "Argument ${i + 1}: expected ${typeToString(tc.reg, param_id)}, got ${typeToString(tc.reg, arg_id)}")
+        }
+        i = i + 1
+    }
+
+    // Return type
+    if (callee_type.fn_return_id >= 0) {
+        return callee_type.fn_return_id
+    }
+    return tc.reg.void_id
+}
+
+fn tcCheckFieldExpr(tc: TypeChecker, expr: Expr) i64 {
+    if (expr.object == null) {
+        return tc.reg.error_id
+    }
+
+    const obj_id = tcCheckExpr(tc, expr.object.*)
+
+    if (isErrorTypeId(tc.reg, obj_id)) {
+        return tc.reg.error_id
+    }
+
+    const obj_type = regGetType(tc.reg, obj_id)
+
+    // Check for struct field
+    if (obj_type.tag == TypeTag.StructType) {
+        var i: i64 = 0
+        while (i < obj_type.struct_fields.len()) {
+            const field = obj_type.struct_fields.get(i)
+            if (field.name == expr.field_name) {
+                return field.field_type_id
+            }
+            i = i + 1
+        }
+        tcError(tc, expr.loc.line, "Struct '${obj_type.struct_name}' has no field '${expr.field_name}'")
+        return tc.reg.error_id
+    }
+
+    // Check for pointer dereference (ptr.field -> (*ptr).field)
+    if (obj_type.tag == TypeTag.Pointer and obj_type.element_type_id >= 0) {
+        const inner = regGetType(tc.reg, obj_type.element_type_id)
+        if (inner.tag == TypeTag.StructType) {
+            var i: i64 = 0
+            while (i < inner.struct_fields.len()) {
+                const field = inner.struct_fields.get(i)
+                if (field.name == expr.field_name) {
+                    return field.field_type_id
+                }
+                i = i + 1
+            }
+            tcError(tc, expr.loc.line, "Struct '${inner.struct_name}' has no field '${expr.field_name}'")
+            return tc.reg.error_id
+        }
+    }
+
+    // Check for enum variant (EnumType.Variant)
+    if (obj_type.tag == TypeTag.EnumType) {
+        var i: i64 = 0
+        while (i < obj_type.enum_variants.len()) {
+            const variant = obj_type.enum_variants.get(i)
+            if (variant.name == expr.field_name) {
+                return obj_id  // Variant has the enum type
+            }
+            i = i + 1
+        }
+        tcError(tc, expr.loc.line, "Enum '${obj_type.enum_name}' has no variant '${expr.field_name}'")
+        return tc.reg.error_id
+    }
+
+    tcError(tc, expr.loc.line, "Cannot access field on ${typeToString(tc.reg, obj_id)}")
+    return tc.reg.error_id
+}
+
+fn tcCheckIndexExpr(tc: TypeChecker, expr: Expr) i64 {
+    if (expr.object == null) {
+        return tc.reg.error_id
+    }
+
+    const obj_id = tcCheckExpr(tc, expr.object.*)
+
+    if (isErrorTypeId(tc.reg, obj_id)) {
+        return tc.reg.error_id
+    }
+
+    // Check index type
+    if (expr.index != null) {
+        const idx_id = tcCheckExpr(tc, expr.index.*)
+        const idx_type = regGetType(tc.reg, idx_id)
+        if (not isIntegerType(idx_type) and not isErrorTypeId(tc.reg, idx_id)) {
+            tcError(tc, expr.loc.line, "Index must be integer, got ${typeToString(tc.reg, idx_id)}")
+        }
+    }
+
+    const obj_type = regGetType(tc.reg, obj_id)
+
+    // Get element type
+    if (obj_type.tag == TypeTag.Array or obj_type.tag == TypeTag.Slice) {
+        if (obj_type.element_type_id >= 0) {
+            return obj_type.element_type_id
+        }
+        return tc.reg.error_id
+    }
+
+    // String indexing returns char
+    if (obj_id == tc.reg.string_id) {
+        return tc.reg.char_id
+    }
+
+    tcError(tc, expr.loc.line, "Cannot index ${typeToString(tc.reg, obj_id)}")
+    return tc.reg.error_id
+}
+
+fn tcCheckStructInit(tc: TypeChecker, expr: Expr) i64 {
+    if (expr.struct_type == null) {
+        return tc.reg.error_id
+    }
+
+    const struct_id = tcResolveType(tc, expr.struct_type.*)
+
+    if (isErrorTypeId(tc.reg, struct_id)) {
+        return tc.reg.error_id
+    }
+
+    const struct_type = regGetType(tc.reg, struct_id)
+
+    if (struct_type.tag != TypeTag.StructType) {
+        tcError(tc, expr.loc.line, "Cannot initialize non-struct type ${typeToString(tc.reg, struct_id)}")
+        return tc.reg.error_id
+    }
+
+    // Track which fields are initialized
+    const initialized: Map<string, bool> = Map.new()
+
+    // Check each field initializer
+    var i: i64 = 0
+    while (i < len(expr.field_inits)) {
+        const init = expr.field_inits[i]
+        const field_name = init.name
+
+        // Check for duplicate
+        if (initialized.has(field_name)) {
+            tcError(tc, init.loc.line, "Field '${field_name}' initialized multiple times")
+            i = i + 1
+            continue
+        }
+        initialized.set(field_name, true)
+
+        // Find field in struct
+        var found = false
+        var expected_id = tc.reg.error_id
+        var j: i64 = 0
+        while (j < struct_type.struct_fields.len()) {
+            const field = struct_type.struct_fields.get(j)
+            if (field.name == field_name) {
+                found = true
+                expected_id = field.field_type_id
+                break
+            }
+            j = j + 1
+        }
+
+        if (not found) {
+            tcError(tc, init.loc.line, "Unknown field '${field_name}' in struct ${struct_type.struct_name}")
+            i = i + 1
+            continue
+        }
+
+        // Check value type
+        if (init.value != null) {
+            const value_id = tcCheckExpr(tc, init.value.*)
+            if (not isAssignableToById(tc.reg, value_id, expected_id) and not isErrorTypeId(tc.reg, value_id)) {
+                tcError(tc, init.loc.line, "Field '${field_name}' expects ${typeToString(tc.reg, expected_id)}, got ${typeToString(tc.reg, value_id)}")
+            }
+        }
+
+        i = i + 1
+    }
+
+    // Check for missing required fields
+    var k: i64 = 0
+    while (k < struct_type.struct_fields.len()) {
+        const field = struct_type.struct_fields.get(k)
+        if (not initialized.has(field.name)) {
+            tcError(tc, expr.loc.line, "Missing field '${field.name}' in struct initializer")
+        }
+        k = k + 1
+    }
+
+    return struct_id
+}
+
+fn tcCheckArrayInit(tc: TypeChecker, expr: Expr) i64 {
+    if (len(expr.elements) == 0) {
+        // Empty array - type must be inferred from context
+        return regAddSliceType(tc.reg, tc.reg.error_id)
+    }
+
+    // Infer element type from first element
+    const first_id = tcCheckExpr(tc, expr.elements[0].*)
+
+    // Check all elements match
+    var i: i64 = 1
+    while (i < len(expr.elements)) {
+        const elem_id = tcCheckExpr(tc, expr.elements[i].*)
+        if (not isAssignableToById(tc.reg, elem_id, first_id) and not isErrorTypeId(tc.reg, elem_id)) {
+            tcError(tc, expr.loc.line, "Array element type mismatch: expected ${typeToString(tc.reg, first_id)}, got ${typeToString(tc.reg, elem_id)}")
+        }
+        i = i + 1
+    }
+
+    return regAddArrayType(tc.reg, first_id, len(expr.elements))
+}
+
+// =============================================================================
+// Type Utilities
+// =============================================================================
+
+fn tcNumericPromotion(tc: TypeChecker, a: TypeInfo, b: TypeInfo) i64 {
+    // Float takes precedence
+    if (a.tag == TypeTag.F64 or b.tag == TypeTag.F64) {
+        return tc.reg.f64_id
+    }
+    if (a.tag == TypeTag.F32 or b.tag == TypeTag.F32) {
+        return tc.reg.f32_id
+    }
+
+    // Larger integer wins
+    if (a.tag == TypeTag.I64 or b.tag == TypeTag.I64) {
+        return tc.reg.i64_id
+    }
+    if (a.tag == TypeTag.U64 or b.tag == TypeTag.U64) {
+        return tc.reg.u64_id
+    }
+    if (a.tag == TypeTag.I32 or b.tag == TypeTag.I32) {
+        return tc.reg.i32_id
+    }
+    if (a.tag == TypeTag.U32 or b.tag == TypeTag.U32) {
+        return tc.reg.u32_id
+    }
+
+    // Default to i64
+    return tc.reg.i64_id
+}
+
+// =============================================================================
+// Additional Statement Checkers
+// =============================================================================
+
+// Check infinite loop: loop { body }
+fn tcCheckLoopStmt(tc: TypeChecker, stmt: Stmt) {
+    if (stmt.loop_body != null) {
+        smEnterLoopScope(tc.scopes)
+        tcCheckStatement(tc, stmt.loop_body.*)
+        smExitScope(tc.scopes)
+    }
+}
+
+// Check defer statement: defer expr
+fn tcCheckDeferStmt(tc: TypeChecker, stmt: Stmt) {
+    if (stmt.defer_expr != null) {
+        tcCheckExpr(tc, stmt.defer_expr.*)
+    }
+}
+
+// Check try/catch: try { } catch { } or try { } catch (e) { }
+fn tcCheckTryStmt(tc: TypeChecker, stmt: Stmt) {
+    // Check try body
+    if (stmt.try_body != null) {
+        smEnterScope(tc.scopes)
+        tcCheckStatement(tc, stmt.try_body.*)
+        smExitScope(tc.scopes)
+    }
+
+    // Check catch body
+    if (stmt.catch_body != null) {
+        smEnterScope(tc.scopes)
+
+        // If there's a catch variable, register it
+        if (stmt.catch_var != "") {
+            const sym = Symbol{
+                .name = stmt.catch_var,
+                .kind = SymbolKind.Variable,
+                .type_id = tc.reg.error_id,
+                .mutable = false,
+                .line = stmt.loc.line,
+                .valid = true,
+            }
+            smDefine(tc.scopes, stmt.catch_var, sym)
+        }
+
+        tcCheckStatement(tc, stmt.catch_body.*)
+        smExitScope(tc.scopes)
+    }
+}
+
+// Check throw statement: throw expr
+fn tcCheckThrowStmt(tc: TypeChecker, stmt: Stmt) {
+    if (stmt.throw_expr != null) {
+        tcCheckExpr(tc, stmt.throw_expr.*)
+        // Note: In a full implementation, we'd verify the expression is an error type
+        // and track that the function can throw
+    }
+}
+
+// Check test declaration: test "name" { body }
+fn tcCheckTestDecl(tc: TypeChecker, stmt: Stmt) {
+    if (stmt.test_body != null) {
+        smEnterScope(tc.scopes)
+        tcCheckStatement(tc, stmt.test_body.*)
+        smExitScope(tc.scopes)
+    }
+}
+
+// Check view declaration: view name: Type = @base_field
+fn tcCheckViewDecl(tc: TypeChecker, stmt: Stmt) {
+    // Resolve the view type
+    if (stmt.view_type != null) {
+        const type_id = tcResolveType(tc, stmt.view_type.*)
+
+        // Register the view in symbol table
+        const sym = Symbol{
+            .name = stmt.view_name,
+            .kind = SymbolKind.Variable,
+            .type_id = type_id,
+            .mutable = false,
+            .line = stmt.loc.line,
+            .valid = true,
+        }
+        smDefine(tc.scopes, stmt.view_name, sym)
+    }
+    // Note: In a full implementation, we'd validate that the base field exists
+    // and has compatible type for the view offset
+}
+
+// Check comptime statement: comptime { } or comptime if { }
+fn tcCheckComptimeStmt(tc: TypeChecker, stmt: Stmt) {
+    // For bootstrap, just type check the body normally
+    // Full comptime evaluation would happen in a later phase
+    if (stmt.comptime_body != null) {
+        smEnterScope(tc.scopes)
+        tcCheckStatement(tc, stmt.comptime_body.*)
+        smExitScope(tc.scopes)
+    }
+
+    // Handle comptime if
+    if (stmt.comptime_cond != null) {
+        tcCheckExpr(tc, stmt.comptime_cond.*)
+    }
+    if (stmt.comptime_else != null) {
+        tcCheckStatement(tc, stmt.comptime_else.*)
+    }
+}
+
+// =============================================================================
+// Main Entry Point
+// =============================================================================
+
+fn typeCheck(stmts: []Stmt) TypeChecker {
+    var tc = newTypeChecker()
+
+    // First pass: collect type declarations
+    tcCollectDeclarations(tc, stmts)
+
+    // Second pass: check all statements
+    var i: i64 = 0
+    while (i < len(stmts)) {
+        tcCheckStatement(tc, stmts[i])
+        i = i + 1
+    }
+
+    return tc
+}

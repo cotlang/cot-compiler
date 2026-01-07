@@ -1,0 +1,217 @@
+// Scope management test for the type checker
+
+// =============================================================================
+// Symbol Table Entry
+// =============================================================================
+
+enum SymbolKind {
+    Variable,
+    Constant,
+    FunctionDef,
+    StructDef,
+    EnumDef,
+    EnumVariantDef,
+    Parameter,
+    TypeAliasDef,
+}
+
+struct Symbol {
+    name: string,
+    kind: SymbolKind,
+    type_id: i64,
+    mutable: bool,
+    line: i64,
+    valid: bool,
+}
+
+fn invalidSymbol() Symbol {
+    return Symbol{
+        .name = "",
+        .kind = SymbolKind.Variable,
+        .type_id = -1,
+        .mutable = false,
+        .line = 0,
+        .valid = false,
+    }
+}
+
+// =============================================================================
+// Scope Management
+// =============================================================================
+
+struct Scope {
+    parent_id: i64,
+    symbols: Map<string, Symbol>,
+    return_type_id: i64,
+    in_loop: bool,
+}
+
+struct ScopeManager {
+    scopes: List<Scope>,
+    current_id: i64,
+}
+
+fn newScopeManager() ScopeManager {
+    const scopes: List<Scope> = List.new()
+    const symbols: Map<string, Symbol> = Map.new()
+    const global = Scope{
+        .parent_id = -1,
+        .symbols = symbols,
+        .return_type_id = -1,
+        .in_loop = false,
+    }
+    scopes.push(global)
+
+    return ScopeManager{
+        .scopes = scopes,
+        .current_id = 0,
+    }
+}
+
+fn smEnterScope(sm: ScopeManager) i64 {
+    const current = sm.scopes.get(sm.current_id)
+    const symbols: Map<string, Symbol> = Map.new()
+    const new_scope = Scope{
+        .parent_id = sm.current_id,
+        .symbols = symbols,
+        .return_type_id = current.return_type_id,
+        .in_loop = current.in_loop,
+    }
+    const new_id = sm.scopes.len()
+    sm.scopes.push(new_scope)
+    sm.current_id = new_id
+    return new_id
+}
+
+fn smExitScope(sm: ScopeManager) {
+    const current = sm.scopes.get(sm.current_id)
+    if (current.parent_id >= 0) {
+        sm.current_id = current.parent_id
+    }
+}
+
+fn smDefine(sm: ScopeManager, name: string, sym: Symbol) bool {
+    const scope = sm.scopes.get(sm.current_id)
+    if (scope.symbols.has(name)) {
+        return false
+    }
+    scope.symbols.set(name, sym)
+    return true
+}
+
+fn smLookup(sm: ScopeManager, name: string) Symbol {
+    var scope_id = sm.current_id
+    while (scope_id >= 0) {
+        const scope = sm.scopes.get(scope_id)
+        if (scope.symbols.has(name)) {
+            var sym = scope.symbols.get(name)
+            sym.valid = true
+            return sym
+        }
+        scope_id = scope.parent_id
+    }
+    return invalidSymbol()
+}
+
+fn smLookupLocal(sm: ScopeManager, name: string) Symbol {
+    const scope = sm.scopes.get(sm.current_id)
+    if (scope.symbols.has(name)) {
+        var sym = scope.symbols.get(name)
+        sym.valid = true
+        return sym
+    }
+    return invalidSymbol()
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+fn testScopeManagement() {
+    print("Testing scope management...")
+
+    // Create scope manager
+    var sm = newScopeManager()
+
+    // Define a variable in global scope
+    const x_sym = Symbol{
+        .name = "x",
+        .kind = SymbolKind.Variable,
+        .type_id = 1,
+        .mutable = true,
+        .line = 1,
+        .valid = true,
+    }
+
+    const defined = smDefine(sm, "x", x_sym)
+    if (defined) {
+        print("  [PASS] Defined 'x' in global scope")
+    } else {
+        print("  [FAIL] Failed to define 'x'")
+    }
+
+    // Look up the variable
+    const found = smLookup(sm, "x")
+    if (found.valid) {
+        print("  [PASS] Found 'x' in global scope")
+    } else {
+        print("  [FAIL] Could not find 'x'")
+    }
+
+    // Enter a new scope
+    smEnterScope(sm)
+    print("  [INFO] Entered new scope")
+
+    // Look up 'x' from inner scope (should find it in parent)
+    const found_inner = smLookup(sm, "x")
+    if (found_inner.valid) {
+        print("  [PASS] Found 'x' from inner scope")
+    } else {
+        print("  [FAIL] Could not find 'x' from inner scope")
+    }
+
+    // Define a shadowing variable
+    const x_shadow = Symbol{
+        .name = "x",
+        .kind = SymbolKind.Variable,
+        .type_id = 2,
+        .mutable = false,
+        .line = 10,
+        .valid = true,
+    }
+    smDefine(sm, "x", x_shadow)
+
+    // Local lookup should find the shadowing variable
+    const local = smLookupLocal(sm, "x")
+    if (local.valid and local.type_id == 2) {
+        print("  [PASS] Local lookup found shadowing 'x'")
+    } else {
+        print("  [FAIL] Local lookup did not find shadowing 'x'")
+    }
+
+    // Exit scope
+    smExitScope(sm)
+    print("  [INFO] Exited scope")
+
+    // Now lookup should find original 'x'
+    const found_after = smLookup(sm, "x")
+    if (found_after.valid and found_after.type_id == 1) {
+        print("  [PASS] After exit, found original 'x'")
+    } else {
+        print("  [FAIL] After exit, did not find original 'x'")
+    }
+
+    // Test looking up non-existent variable
+    const not_found = smLookup(sm, "y")
+    if (not not_found.valid) {
+        print("  [PASS] 'y' correctly not found")
+    } else {
+        print("  [FAIL] 'y' should not be found")
+    }
+
+    print("Scope management tests complete!")
+}
+
+fn main() {
+    testScopeManagement()
+}

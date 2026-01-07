@@ -1,0 +1,21 @@
+// Debug List<struct> string field issue
+
+struct Simple {
+    num: i64,
+    text: string,
+}
+
+fn main() {
+    // Test 1: Struct without list
+    const s = Simple{ .num = 42, .text = "hello" }
+    println(s.num)   // Expected: 42
+    println(s.text)  // Expected: hello
+
+    // Test 2: List with struct
+    const items: List<Simple> = List.new()
+    items.push(Simple{ .num = 100, .text = "world" })
+
+    const item = items.get(0)
+    println(item.num)   // Expected: 100
+    println(item.text)  // Expected: world
+}

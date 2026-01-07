@@ -1,0 +1,18 @@
+# Cot build cache
+.cot-cache/
+
+# Compiled bytecode
+*.cbo
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Temporary files
+/tmp/

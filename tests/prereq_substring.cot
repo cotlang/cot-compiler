@@ -1,0 +1,53 @@
+// Test substring access for character iteration
+
+fn main() {
+    println("Substring tests")
+}
+
+test "substring with colon syntax" {
+    const s = "hello"
+
+    // Extract single character (1-based)
+    const h = s(1:1)
+    assert(h == "h", "s(1:1) should be 'h'")
+
+    const e = s(2:1)
+    assert(e == "e", "s(2:1) should be 'e'")
+
+    const o = s(5:1)
+    assert(o == "o", "s(5:1) should be 'o'")
+}
+
+test "substring multiple chars" {
+    const s = "hello world"
+
+    const hello = s(1:5)
+    assert(hello == "hello", "s(1:5)")
+
+    const world = s(7:5)
+    assert(world == "world", "s(7:5)")
+}
+
+test "character iteration via substring" {
+    const s = "abc"
+    var result = ""
+    var i: i64 = 1
+
+    while (i <= len(s)) {
+        const ch = s(i:1)
+        result = result + ch
+        i = i + 1
+    }
+
+    assert(result == "abc", "iteration should produce 'abc'")
+}
+
+test "character classification" {
+    const digit = "5"
+    const is_digit = digit >= "0" and digit <= "9"
+    assert(is_digit, "'5' is digit")
+
+    const letter = "a"
+    const is_lower = letter >= "a" and letter <= "z"
+    assert(is_lower, "'a' is lowercase")
+}

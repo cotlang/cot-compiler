@@ -1,0 +1,652 @@
+// Lexer for the Cot self-hosted compiler
+//
+// Tokenizes Cot source code into a stream of tokens.
+// Uses pointer parameters for mutable state.
+
+import "token"
+
+struct Lexer {
+    source: string,
+    start: i64,
+    current: i64,
+    line: i64,
+    column: i64,
+    start_column: i64,
+    // String interpolation state
+    in_interp_string: bool,
+    interp_brace_depth: i64,
+}
+
+// Create a new lexer for the given source
+fn newLexer(source: string) Lexer {
+    return Lexer{
+        .source = source,
+        .start = 0,
+        .current = 0,
+        .line = 1,
+        .column = 1,
+        .start_column = 1,
+        .in_interp_string = false,
+        .interp_brace_depth = 0,
+    }
+}
+
+// Check if we've reached the end of source
+fn lexerIsAtEnd(lexer: *Lexer) bool {
+    return lexer.current >= len(lexer.source)
+}
+
+// Advance to the next character and return the current one
+fn lexerAdvance(lexer: *Lexer) string {
+    if (lexerIsAtEnd(lexer)) {
+        return ""
+    }
+    var ch: string = lexer.source[lexer.current..lexer.current + 1]
+    lexer.current = lexer.current + 1
+    if (ch == "\n") {
+        lexer.line = lexer.line + 1
+        lexer.column = 1
+    } else {
+        lexer.column = lexer.column + 1
+    }
+    return ch
+}
+
+// Peek at current character without consuming
+fn lexerPeek(lexer: *Lexer) string {
+    if (lexerIsAtEnd(lexer)) {
+        return ""
+    }
+    return lexer.source[lexer.current..lexer.current + 1]
+}
+
+// Peek at next character (one ahead)
+fn lexerPeekNext(lexer: *Lexer) string {
+    if (lexer.current + 1 >= len(lexer.source)) {
+        return ""
+    }
+    return lexer.source[lexer.current + 1..lexer.current + 2]
+}
+
+// Match current character, advance if matches
+fn lexerMatch(lexer: *Lexer, expected: string) bool {
+    if (lexerIsAtEnd(lexer)) {
+        return false
+    }
+    if (lexerPeek(lexer) != expected) {
+        return false
+    }
+    lexer.current = lexer.current + 1
+    lexer.column = lexer.column + 1
+    return true
+}
+
+// Skip whitespace and comments
+fn lexerSkipWhitespace(lexer: *Lexer) {
+    while (!lexerIsAtEnd(lexer)) {
+        var ch: string = lexerPeek(lexer)
+
+        // Whitespace characters
+        if (ch == " " or ch == "\t" or ch == "\r" or ch == "\n") {
+            lexerAdvance(lexer)
+            continue
+        }
+
+        // Comments
+        if (ch == "/") {
+            if (lexerPeekNext(lexer) == "/") {
+                // Line comment - skip to end of line
+                while (!lexerIsAtEnd(lexer) and lexerPeek(lexer) != "\n") {
+                    lexerAdvance(lexer)
+                }
+                continue
+            } else if (lexerPeekNext(lexer) == "*") {
+                // Block comment
+                lexerAdvance(lexer)  // skip /
+                lexerAdvance(lexer)  // skip *
+                while (!lexerIsAtEnd(lexer)) {
+                    if (lexerPeek(lexer) == "*" and lexerPeekNext(lexer) == "/") {
+                        lexerAdvance(lexer)  // skip *
+                        lexerAdvance(lexer)  // skip /
+                        break
+                    }
+                    lexerAdvance(lexer)
+                }
+                continue
+            }
+        }
+
+        // Not whitespace or comment - stop
+        return
+    }
+}
+
+// Get current lexeme (from start to current)
+fn lexerCurrentLexeme(lexer: *Lexer) string {
+    return lexer.source[lexer.start..lexer.current]
+}
+
+// Make a token with current lexeme
+fn lexerMakeToken(lexer: *Lexer, token_type: TokenType) Token {
+    return newToken(
+        token_type,
+        lexerCurrentLexeme(lexer),
+        lexer.line,
+        lexer.start_column,
+        lexer.start,
+        lexer.current
+    )
+}
+
+// Make an error token
+fn lexerErrorToken(lexer: *Lexer, message: string) Token {
+    return newToken(
+        TokenType.Invalid,
+        message,
+        lexer.line,
+        lexer.start_column,
+        lexer.start,
+        lexer.current
+    )
+}
+
+// Scan a string literal
+fn lexerScanString(lexer: *Lexer) Token {
+    var backslash: string = char(92)  // backslash character
+    var quote: string = char(34)      // double quote character
+    while (!lexerIsAtEnd(lexer) and lexerPeek(lexer) != quote) {
+        if (lexerPeek(lexer) == backslash) {
+            lexerAdvance(lexer)  // skip backslash
+            if (!lexerIsAtEnd(lexer)) {
+                lexerAdvance(lexer)  // skip escaped char
+            }
+        } else {
+            lexerAdvance(lexer)
+        }
+    }
+
+    if (lexerIsAtEnd(lexer)) {
+        return lexerErrorToken(lexer, "Unterminated string")
+    }
+
+    lexerAdvance(lexer)  // closing quote
+    return lexerMakeToken(lexer, TokenType.StringLiteral)
+}
+
+// Scan a number (integer or decimal)
+fn lexerScanNumber(lexer: *Lexer) Token {
+    // Check for hex/binary prefix
+    if (lexerCurrentLexeme(lexer) == "0" and !lexerIsAtEnd(lexer)) {
+        var next: string = lexerPeek(lexer)
+        if (next == "x" or next == "X") {
+            lexerAdvance(lexer)  // consume x
+            while (!lexerIsAtEnd(lexer) and isHexDigit(lexerPeek(lexer))) {
+                lexerAdvance(lexer)
+            }
+            return lexerMakeToken(lexer, TokenType.IntegerLiteral)
+        }
+        if (next == "b" or next == "B") {
+            lexerAdvance(lexer)  // consume b
+            while (!lexerIsAtEnd(lexer)) {
+                var ch: string = lexerPeek(lexer)
+                if (ch == "0" or ch == "1") {
+                    lexerAdvance(lexer)
+                } else {
+                    break
+                }
+            }
+            return lexerMakeToken(lexer, TokenType.IntegerLiteral)
+        }
+    }
+
+    // Regular integer/decimal
+    while (!lexerIsAtEnd(lexer) and isDigit(lexerPeek(lexer))) {
+        lexerAdvance(lexer)
+    }
+
+    // Check for decimal point
+    if (!lexerIsAtEnd(lexer) and lexerPeek(lexer) == "." and isDigit(lexerPeekNext(lexer))) {
+        lexerAdvance(lexer)  // consume .
+        while (!lexerIsAtEnd(lexer) and isDigit(lexerPeek(lexer))) {
+            lexerAdvance(lexer)
+        }
+        return lexerMakeToken(lexer, TokenType.DecimalLiteral)
+    }
+
+    return lexerMakeToken(lexer, TokenType.IntegerLiteral)
+}
+
+// Scan an identifier or keyword
+fn lexerScanIdentifier(lexer: *Lexer) Token {
+    while (!lexerIsAtEnd(lexer) and isAlphaNumeric(lexerPeek(lexer))) {
+        lexerAdvance(lexer)
+    }
+
+    var text: string = lexerCurrentLexeme(lexer)
+    var token_type: TokenType = identifierType(text)
+    return lexerMakeToken(lexer, token_type)
+}
+
+// Scan content inside an interpolated string: "Hello ${name}!"
+fn lexerScanInterpStringContent(lexer: *Lexer) Token {
+    lexer.start = lexer.current
+    lexer.start_column = lexer.column
+    var quote: string = char(34)
+
+    // If we're inside an interpolation ${...}, scan normal tokens
+    if (lexer.interp_brace_depth > 0) {
+        // Skip whitespace inside interpolation
+        lexerSkipWhitespace(lexer)
+        lexer.start = lexer.current
+        lexer.start_column = lexer.column
+
+        if (lexerIsAtEnd(lexer)) {
+            lexer.in_interp_string = false
+            return lexerErrorToken(lexer, "Unterminated interpolated string")
+        }
+
+        var ch: string = lexerPeek(lexer)
+
+        // Check for nested braces
+        if (ch == "{") {
+            lexerAdvance(lexer)
+            lexer.interp_brace_depth = lexer.interp_brace_depth + 1
+            return lexerMakeToken(lexer, TokenType.LeftBrace)
+        }
+
+        // Check for closing brace - end of interpolation
+        if (ch == "}") {
+            lexerAdvance(lexer)
+            lexer.interp_brace_depth = lexer.interp_brace_depth - 1
+            if (lexer.interp_brace_depth == 0) {
+                return lexerMakeToken(lexer, TokenType.InterpExprEnd)
+            }
+            return lexerMakeToken(lexer, TokenType.RightBrace)
+        }
+
+        // Otherwise scan a normal token for the expression
+        ch = lexerAdvance(lexer)
+
+        // Handle common expression tokens
+        if (isAlpha(ch)) {
+            return lexerScanIdentifier(lexer)
+        }
+        if (isDigit(ch)) {
+            return lexerScanNumber(lexer)
+        }
+
+        switch (ch) {
+            "(" => { return lexerMakeToken(lexer, TokenType.LeftParen) }
+            ")" => { return lexerMakeToken(lexer, TokenType.RightParen) }
+            "[" => { return lexerMakeToken(lexer, TokenType.LeftBracket) }
+            "]" => { return lexerMakeToken(lexer, TokenType.RightBracket) }
+            "," => { return lexerMakeToken(lexer, TokenType.Comma) }
+            "." => { return lexerMakeToken(lexer, TokenType.Dot) }
+            "+" => { return lexerMakeToken(lexer, TokenType.Plus) }
+            "-" => { return lexerMakeToken(lexer, TokenType.Minus) }
+            "*" => { return lexerMakeToken(lexer, TokenType.Star) }
+            "/" => { return lexerMakeToken(lexer, TokenType.Slash) }
+        }
+
+        // Handle string inside interpolation
+        if (ch == quote) {
+            return lexerScanString(lexer)
+        }
+
+        return lexerErrorToken(lexer, "Unexpected character in interpolation: " + ch)
+    }
+
+    // We're in string content mode (not inside ${})
+    if (lexerIsAtEnd(lexer)) {
+        lexer.in_interp_string = false
+        return lexerErrorToken(lexer, "Unterminated interpolated string")
+    }
+
+    var ch: string = lexerPeek(lexer)
+
+    // Check for closing quote - end of interpolated string
+    if (ch == quote) {
+        lexerAdvance(lexer)
+        lexer.in_interp_string = false
+        return lexerMakeToken(lexer, TokenType.StringInterpEnd)
+    }
+
+    // Check for interpolation start: ${
+    if (ch == "$" and lexer.current + 1 < len(lexer.source)) {
+        var next: string = lexer.source[lexer.current + 1..lexer.current + 2]
+        if (next == "{") {
+            lexerAdvance(lexer)  // $
+            lexerAdvance(lexer)  // {
+            lexer.interp_brace_depth = 1
+            return lexerMakeToken(lexer, TokenType.InterpExprStart)
+        }
+    }
+
+    // Scan string content until ${ or closing quote
+    var backslash: string = char(92)
+    while (!lexerIsAtEnd(lexer)) {
+        var next_ch: string = lexerPeek(lexer)
+        if (next_ch == quote) {
+            break
+        }
+        // Check for ${ interpolation start
+        if (next_ch == "$" and lexer.current + 1 < len(lexer.source)) {
+            var after: string = lexer.source[lexer.current + 1..lexer.current + 2]
+            if (after == "{") {
+                break
+            }
+        }
+        // Handle escape sequences
+        if (next_ch == backslash and lexer.current + 1 < len(lexer.source)) {
+            lexerAdvance(lexer)  // skip backslash
+        }
+        lexerAdvance(lexer)
+    }
+
+    return lexerMakeToken(lexer, TokenType.StringContent)
+}
+
+// Scan a single token
+fn lexerScanToken(lexer: *Lexer) Token {
+    // If we're inside an interpolated string, handle it specially
+    if (lexer.in_interp_string) {
+        return lexerScanInterpStringContent(lexer)
+    }
+
+    lexerSkipWhitespace(lexer)
+    lexer.start = lexer.current
+    lexer.start_column = lexer.column
+
+    if (lexerIsAtEnd(lexer)) {
+        return lexerMakeToken(lexer, TokenType.Eof)
+    }
+
+    var ch: string = lexerAdvance(lexer)
+
+    // Identifiers and keywords
+    if (isAlpha(ch)) {
+        return lexerScanIdentifier(lexer)
+    }
+
+    // Numbers
+    if (isDigit(ch)) {
+        return lexerScanNumber(lexer)
+    }
+
+    // String literal - check for interpolation
+    var quote: string = char(34)
+    if (ch == quote) {
+        // Check if this string contains ${ for interpolation
+        if (lexerStringContainsInterpolation(lexer)) {
+            lexer.in_interp_string = true
+            lexer.interp_brace_depth = 0
+            return lexerMakeToken(lexer, TokenType.StringInterpStart)
+        }
+        return lexerScanString(lexer)
+    }
+
+    // Punctuation and operators
+    switch (ch) {
+        // Simple single-character tokens
+        "(" => { return lexerMakeToken(lexer, TokenType.LeftParen) }
+        ")" => { return lexerMakeToken(lexer, TokenType.RightParen) }
+        "[" => { return lexerMakeToken(lexer, TokenType.LeftBracket) }
+        "]" => { return lexerMakeToken(lexer, TokenType.RightBracket) }
+        "{" => { return lexerMakeToken(lexer, TokenType.LeftBrace) }
+        "}" => { return lexerMakeToken(lexer, TokenType.RightBrace) }
+        "," => { return lexerMakeToken(lexer, TokenType.Comma) }
+        ";" => { return lexerMakeToken(lexer, TokenType.Semicolon) }
+        "@" => { return lexerMakeToken(lexer, TokenType.At) }
+        "%" => { return lexerMakeToken(lexer, TokenType.Percent) }
+        "^" => { return lexerMakeToken(lexer, TokenType.Caret) }
+        "~" => { return lexerMakeToken(lexer, TokenType.Tilde) }
+        "#" => {
+            if (lexerMatch(lexer, "#")) {
+                return lexerMakeToken(lexer, TokenType.HashHash)
+            }
+            return lexerMakeToken(lexer, TokenType.Hash)
+        }
+
+        // Dot and range
+        "." => {
+            if (lexerMatch(lexer, ".")) {
+                if (lexerMatch(lexer, "=")) {
+                    return lexerMakeToken(lexer, TokenType.RangeInclusive)
+                }
+                return lexerMakeToken(lexer, TokenType.Range)
+            }
+            return lexerMakeToken(lexer, TokenType.Dot)
+        }
+
+        // Colon variants
+        ":" => {
+            if (lexerMatch(lexer, ":")) {
+                return lexerMakeToken(lexer, TokenType.DoubleColon)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.Walrus)
+            }
+            return lexerMakeToken(lexer, TokenType.Colon)
+        }
+
+        // Plus variants
+        "+" => {
+            if (lexerMatch(lexer, "+")) {
+                return lexerMakeToken(lexer, TokenType.PlusPlus)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.PlusEquals)
+            }
+            return lexerMakeToken(lexer, TokenType.Plus)
+        }
+
+        // Minus and arrow
+        "-" => {
+            if (lexerMatch(lexer, ">")) {
+                return lexerMakeToken(lexer, TokenType.Arrow)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.MinusEquals)
+            }
+            return lexerMakeToken(lexer, TokenType.Minus)
+        }
+
+        // Star
+        "*" => {
+            if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.StarEquals)
+            }
+            return lexerMakeToken(lexer, TokenType.Star)
+        }
+
+        // Slash
+        "/" => {
+            if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.SlashEquals)
+            }
+            return lexerMakeToken(lexer, TokenType.Slash)
+        }
+
+        // Equals and fat arrow
+        "=" => {
+            if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.EqualEqual)
+            } else if (lexerMatch(lexer, ">")) {
+                return lexerMakeToken(lexer, TokenType.FatArrow)
+            }
+            return lexerMakeToken(lexer, TokenType.Equals)
+        }
+
+        // Bang
+        "!" => {
+            if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.BangEqual)
+            }
+            return lexerMakeToken(lexer, TokenType.Bang)
+        }
+
+        // Less than and left shift
+        "<" => {
+            if (lexerMatch(lexer, "<")) {
+                return lexerMakeToken(lexer, TokenType.LessLess)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.LessEqual)
+            }
+            return lexerMakeToken(lexer, TokenType.Less)
+        }
+
+        // Greater than and right shift
+        ">" => {
+            if (lexerMatch(lexer, ">")) {
+                return lexerMakeToken(lexer, TokenType.GreaterGreater)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.GreaterEqual)
+            }
+            return lexerMakeToken(lexer, TokenType.Greater)
+        }
+
+        // Ampersand
+        "&" => {
+            if (lexerMatch(lexer, "&")) {
+                return lexerMakeToken(lexer, TokenType.AmpAmp)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.AmpEquals)
+            }
+            return lexerMakeToken(lexer, TokenType.Ampersand)
+        }
+
+        // Pipe
+        "|" => {
+            if (lexerMatch(lexer, "|")) {
+                return lexerMakeToken(lexer, TokenType.PipePipe)
+            } else if (lexerMatch(lexer, "=")) {
+                return lexerMakeToken(lexer, TokenType.PipeEquals)
+            }
+            return lexerMakeToken(lexer, TokenType.Pipe)
+        }
+
+        // Question mark variants
+        "?" => {
+            if (lexerMatch(lexer, ".")) {
+                return lexerMakeToken(lexer, TokenType.QuestionDot)
+            } else if (lexerMatch(lexer, "?")) {
+                return lexerMakeToken(lexer, TokenType.QuestionQuestion)
+            } else if (lexerMatch(lexer, "[")) {
+                return lexerMakeToken(lexer, TokenType.QuestionBracket)
+            }
+            return lexerMakeToken(lexer, TokenType.Question)
+        }
+    }
+
+    return lexerErrorToken(lexer, "Unexpected character: " + ch)
+}
+
+// Character classification helpers
+fn isDigit(ch: string) bool {
+    return ch >= "0" and ch <= "9"
+}
+
+fn isAlpha(ch: string) bool {
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+}
+
+fn isAlphaNumeric(ch: string) bool {
+    return isAlpha(ch) or isDigit(ch)
+}
+
+fn isHexDigit(ch: string) bool {
+    return isDigit(ch) or (ch >= "a" and ch <= "f") or (ch >= "A" and ch <= "F")
+}
+
+// Check if a string starting at current position contains ${ interpolation
+fn lexerStringContainsInterpolation(lexer: *Lexer) bool {
+    var quote: string = char(34)  // double quote
+    var pos: i64 = lexer.current
+    while (pos < len(lexer.source)) {
+        var ch: string = lexer.source[pos..pos + 1]
+        if (ch == quote) {
+            return false  // End of string, no interpolation found
+        }
+        // Check for ${ (but not \${)
+        if (ch == "$" and pos + 1 < len(lexer.source)) {
+            var next: string = lexer.source[pos + 1..pos + 2]
+            if (next == "{") {
+                // Check if escaped by counting backslashes
+                var backslash_count: i64 = 0
+                var check_pos: i64 = pos - 1
+                while (check_pos >= lexer.current) {
+                    var prev: string = lexer.source[check_pos..check_pos + 1]
+                    if (prev == char(92)) {  // backslash
+                        backslash_count = backslash_count + 1
+                        check_pos = check_pos - 1
+                    } else {
+                        break
+                    }
+                }
+                // If even number of backslashes, this is real interpolation
+                if (backslash_count % 2 == 0) {
+                    return true
+                }
+            }
+        }
+        pos = pos + 1
+    }
+    return false
+}
+
+// Keyword lookup - returns token type for identifier
+fn identifierType(text: string) TokenType {
+    switch (text) {
+        // Declaration keywords
+        "fn" => { return TokenType.KwFn }
+        "struct" => { return TokenType.KwStruct }
+        "union" => { return TokenType.KwUnion }
+        "view" => { return TokenType.KwView }
+        "enum" => { return TokenType.KwEnum }
+        "const" => { return TokenType.KwConst }
+        "var" => { return TokenType.KwVar }
+        "let" => { return TokenType.KwVar }  // let is alias for var
+        "type" => { return TokenType.KwType }
+        "impl" => { return TokenType.KwImpl }
+        "trait" => { return TokenType.KwTrait }
+        "dyn" => { return TokenType.KwDyn }
+        "pub" => { return TokenType.KwPub }
+        "static" => { return TokenType.KwStatic }
+
+        // Control flow keywords
+        "if" => { return TokenType.KwIf }
+        "else" => { return TokenType.KwElse }
+        "switch" => { return TokenType.KwSwitch }
+        "for" => { return TokenType.KwFor }
+        "in" => { return TokenType.KwIn }
+        "while" => { return TokenType.KwWhile }
+        "loop" => { return TokenType.KwLoop }
+        "break" => { return TokenType.KwBreak }
+        "continue" => { return TokenType.KwContinue }
+        "return" => { return TokenType.KwReturn }
+
+        // Error handling keywords
+        "try" => { return TokenType.KwTry }
+        "catch" => { return TokenType.KwCatch }
+        "throw" => { return TokenType.KwThrow }
+        "finally" => { return TokenType.KwFinally }
+        "defer" => { return TokenType.KwDefer }
+
+        // Other keywords
+        "import" => { return TokenType.KwImport }
+        "as" => { return TokenType.KwAs }
+        "is" => { return TokenType.KwIs }
+        "self" => { return TokenType.KwSelf }
+        "true" => { return TokenType.KwTrue }
+        "false" => { return TokenType.KwFalse }
+        "null" => { return TokenType.KwNull }
+        "nil" => { return TokenType.KwNull }
+        "and" => { return TokenType.KwAnd }
+        "or" => { return TokenType.KwOr }
+        "not" => { return TokenType.KwNot }
+        "weak" => { return TokenType.KwWeak }
+        "async" => { return TokenType.KwAsync }
+        "await" => { return TokenType.KwAwait }
+        "comptime" => { return TokenType.KwComptime }
+        "test" => { return TokenType.KwTest }
+    }
+
+    return TokenType.Identifier
+}

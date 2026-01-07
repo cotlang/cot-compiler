@@ -1,0 +1,11 @@
+// Test List<string> basic operations
+fn main() {
+    const words: List<string> = List.new()
+    words.push("hello")
+    words.push("world")
+
+    const a = words.get(0)
+    const b = words.get(1)
+    println(a)  // Expected: hello
+    println(b)  // Expected: world
+}

@@ -1,0 +1,27 @@
+// Test List<T> with custom struct types
+
+struct Node {
+    value: int,
+    name: string,
+}
+
+fn main() {
+    // Create a list of Nodes
+    const nodes: List<Node> = List.new()
+
+    // Push some nodes
+    nodes.push(Node{ .value = 1, .name = "first" })
+    nodes.push(Node{ .value = 2, .name = "second" })
+    nodes.push(Node{ .value = 3, .name = "third" })
+
+    println(nodes.len())  // Expected: 3
+
+    // Get a node
+    const first = nodes.get(0)
+    println(first.value)  // Expected: 1
+    println(first.name)   // Expected: first
+
+    // Get another
+    const second = nodes.get(1)
+    println(second.value) // Expected: 2
+}

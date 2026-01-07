@@ -1,0 +1,19 @@
+// Comprehensive array tests
+
+fn main() {
+    println("Array tests")
+}
+
+test "array literal and indexing" {
+    const arr = [1, 2, 3]
+    assert(arr[0] == 1, "first element")
+    assert(arr[1] == 2, "second element")
+    assert(arr[2] == 3, "third element")
+}
+
+test "array with strings" {
+    const names = ["Alice", "Bob", "Charlie"]
+    assert(names[0] == "Alice", "first name")
+    assert(names[1] == "Bob", "second name")
+    assert(names[2] == "Charlie", "third name")
+}

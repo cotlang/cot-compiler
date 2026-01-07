@@ -1,0 +1,8 @@
+// Simple array test to isolate bug
+
+fn main() {
+    const arr = [1, 2, 3]
+    println("arr created")
+    const x = arr[0]
+    println("x = " + x)
+}

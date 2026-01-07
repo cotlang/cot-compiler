@@ -1,0 +1,16 @@
+// Simple enum test
+
+enum TokenType {
+    Identifier,
+    Number,
+    String,
+}
+
+fn main() {
+    println("enum test")
+}
+
+test "enum value" {
+    const t = TokenType.Identifier
+    assert(t == TokenType.Identifier, "same enum value")
+}

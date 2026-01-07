@@ -1,0 +1,11 @@
+// Test List<int> basic operations
+fn main() {
+    const nums: List<int> = List.new()
+    nums.push(100)
+    nums.push(200)
+
+    const a = nums.get(0)
+    const b = nums.get(1)
+    println(a)  // Expected: 100
+    println(b)  // Expected: 200
+}

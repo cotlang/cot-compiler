@@ -1,0 +1,313 @@
+// Parser tests for the Cot self-hosted compiler
+
+import "../src/token"
+import "../src/ast"
+import "../src/parser"
+
+fn main() {
+    println("=== Parser Tests ===")
+    println("")
+
+    // Test 1: Variable declarations
+    testVarDecl()
+
+    // Test 2: Const declarations
+    testConstDecl()
+
+    // Test 3: Function declarations
+    testFunctionDecl()
+
+    // Test 4: If statements
+    testIfStmt()
+
+    // Test 5: While loops
+    testWhileStmt()
+
+    // Test 6: For loops
+    testForStmt()
+
+    // Test 7: Return statements
+    testReturnStmt()
+
+    // Test 8: View declarations
+    testViewDecl()
+
+    // Test 9: Struct declarations
+    testStructDecl()
+
+    // Test 10: Enum declarations
+    testEnumDecl()
+
+    // Test 11: Binary expressions
+    testBinaryExpr()
+
+    // Test 12: String interpolation
+    testStringInterp()
+
+    println("")
+    println("=== All tests passed! ===")
+}
+
+fn testVarDecl() {
+    println("Test: Variable declarations")
+
+    // var x: i64 = 42
+    var p: Parser = newParser("var x: i64 = 42")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.VarDecl, "var decl")
+    expectVarName(stmt, "x")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testConstDecl() {
+    println("Test: Const declarations")
+
+    // const PI: i64 = 3
+    var p: Parser = newParser("const PI: i64 = 3")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.ConstDecl, "const decl")
+    expectVarName(stmt, "PI")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testFunctionDecl() {
+    println("Test: Function declarations")
+
+    // fn add(a: i64, b: i64) i64 { return a + b }
+    var p: Parser = newParser("fn add(a: i64, b: i64) i64 { return a + b }")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.FunctionDecl, "fn decl")
+    expectFnName(stmt, "add")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testIfStmt() {
+    println("Test: If statements")
+
+    // if (x > 0) { return 1 }
+    var p: Parser = newParser("if (x > 0) { return 1 }")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.IfStmt, "if stmt")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testWhileStmt() {
+    println("Test: While loops")
+
+    // while (x < 10) { x = x + 1 }
+    var p: Parser = newParser("while (x < 10) { x = x + 1 }")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.WhileStmt, "while stmt")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testForStmt() {
+    println("Test: For loops")
+
+    // for (i in items) { println(i) }
+    var p: Parser = newParser("for (i in items) { println(i) }")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.ForStmt, "for stmt")
+    expectForVar(stmt, "i")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testReturnStmt() {
+    println("Test: Return statements")
+
+    // return 42
+    var p: Parser = newParser("return 42")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.ReturnStmt, "return stmt")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testViewDecl() {
+    println("Test: View declarations")
+
+    // view ptr: *i64 = @buffer
+    var p: Parser = newParser("view ptr: *i64 = @buffer")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.ViewDecl, "view decl")
+    expectViewName(stmt, "ptr")
+    expectViewBase(stmt, "buffer")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+
+    // view ptr2: *i64 = @buffer + 8
+    var p2: Parser = newParser("view ptr2: *i64 = @buffer + 8")
+    var stmt2: Stmt = parseStatement(&p2)
+    expectStmtKind(stmt2, StmtKind.ViewDecl, "view decl with offset")
+    expectViewName(stmt2, "ptr2")
+    expectViewBase(stmt2, "buffer")
+    expectViewOffset(stmt2, 8)
+    if (!p2.had_error) {
+        println("  PASS (with offset)")
+    }
+
+    // view ptr3: *i64 = @buffer - 4
+    var p3: Parser = newParser("view ptr3: *i64 = @buffer - 4")
+    var stmt3: Stmt = parseStatement(&p3)
+    expectStmtKind(stmt3, StmtKind.ViewDecl, "view decl with negative offset")
+    expectViewName(stmt3, "ptr3")
+    expectViewOffset(stmt3, 0 - 4)
+    if (!p3.had_error) {
+        println("  PASS (with negative offset)")
+    }
+}
+
+fn testStructDecl() {
+    println("Test: Struct declarations")
+
+    // struct Point { x: i64, y: i64 }
+    var p: Parser = newParser("struct Point { x: i64, y: i64 }")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.StructDecl, "struct decl")
+    expectStructName(stmt, "Point")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testEnumDecl() {
+    println("Test: Enum declarations")
+
+    // enum Color { Red, Green, Blue }
+    var p: Parser = newParser("enum Color { Red, Green, Blue }")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.EnumDecl, "enum decl")
+    expectEnumName(stmt, "Color")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testBinaryExpr() {
+    println("Test: Binary expressions")
+
+    // Expression statement: a + b * c
+    var p: Parser = newParser("a + b * c")
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.ExpressionStmt, "binary expr")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+fn testStringInterp() {
+    println("Test: String interpolation")
+
+    // Expression with interpolated string: "Hello ${name}!"
+    var q: string = char(34)  // quote character
+    var source: string = q + "Hello ${name}!" + q
+    var p: Parser = newParser(source)
+    var stmt: Stmt = parseStatement(&p)
+    expectStmtKind(stmt, StmtKind.ExpressionStmt, "string interp")
+    if (!p.had_error) {
+        println("  PASS")
+    }
+}
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+fn expectStmtKind(stmt: Stmt, expected: StmtKind, desc: string) {
+    if (stmt.kind != expected) {
+        println("  FAIL: ${desc} - expected kind ${stmtKindName(expected)}, got ${stmtKindName(stmt.kind)}")
+    }
+}
+
+fn expectVarName(stmt: Stmt, expected: string) {
+    if (stmt.var_name != expected) {
+        println("  FAIL: var name - expected '${expected}', got '${stmt.var_name}'")
+    }
+}
+
+fn expectFnName(stmt: Stmt, expected: string) {
+    if (stmt.fn_name != expected) {
+        println("  FAIL: fn name - expected '${expected}', got '${stmt.fn_name}'")
+    }
+}
+
+fn expectForVar(stmt: Stmt, expected: string) {
+    if (stmt.for_var != expected) {
+        println("  FAIL: for var - expected '${expected}', got '${stmt.for_var}'")
+    }
+}
+
+fn expectViewName(stmt: Stmt, expected: string) {
+    if (stmt.view_name != expected) {
+        println("  FAIL: view name - expected '${expected}', got '${stmt.view_name}'")
+    }
+}
+
+fn expectViewBase(stmt: Stmt, expected: string) {
+    if (stmt.view_base_field != expected) {
+        println("  FAIL: view base - expected '${expected}', got '${stmt.view_base_field}'")
+    }
+}
+
+fn expectViewOffset(stmt: Stmt, expected: i64) {
+    if (stmt.view_offset != expected) {
+        println("  FAIL: view offset - expected ${expected}, got ${stmt.view_offset}")
+    }
+}
+
+fn expectStructName(stmt: Stmt, expected: string) {
+    if (stmt.struct_name != expected) {
+        println("  FAIL: struct name - expected '${expected}', got '${stmt.struct_name}'")
+    }
+}
+
+fn expectEnumName(stmt: Stmt, expected: string) {
+    if (stmt.enum_name != expected) {
+        println("  FAIL: enum name - expected '${expected}', got '${stmt.enum_name}'")
+    }
+}
+
+fn stmtKindName(k: StmtKind) string {
+    switch (k) {
+        StmtKind.ExpressionStmt => { return "ExpressionStmt" }
+        StmtKind.VarDecl => { return "VarDecl" }
+        StmtKind.ConstDecl => { return "ConstDecl" }
+        StmtKind.ReturnStmt => { return "ReturnStmt" }
+        StmtKind.IfStmt => { return "IfStmt" }
+        StmtKind.WhileStmt => { return "WhileStmt" }
+        StmtKind.ForStmt => { return "ForStmt" }
+        StmtKind.LoopStmt => { return "LoopStmt" }
+        StmtKind.BlockStmt => { return "BlockStmt" }
+        StmtKind.FunctionDecl => { return "FunctionDecl" }
+        StmtKind.StructDecl => { return "StructDecl" }
+        StmtKind.UnionDecl => { return "UnionDecl" }
+        StmtKind.EnumDecl => { return "EnumDecl" }
+        StmtKind.ImplDecl => { return "ImplDecl" }
+        StmtKind.ImportStmt => { return "ImportStmt" }
+        StmtKind.BreakStmt => { return "BreakStmt" }
+        StmtKind.ContinueStmt => { return "ContinueStmt" }
+        StmtKind.SwitchStmt => { return "SwitchStmt" }
+        StmtKind.TraitDecl => { return "TraitDecl" }
+        StmtKind.TypeAliasDecl => { return "TypeAliasDecl" }
+        StmtKind.DeferStmt => { return "DeferStmt" }
+        StmtKind.TryStmt => { return "TryStmt" }
+        StmtKind.ThrowStmt => { return "ThrowStmt" }
+        StmtKind.TestDecl => { return "TestDecl" }
+        StmtKind.ViewDecl => { return "ViewDecl" }
+    }
+    return "Unknown"
+}
