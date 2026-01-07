@@ -1,0 +1,12 @@
+// Test 5: If/else statement (expected: 1)
+fn main() i64 {
+    const x = 5
+    var result = 0
+    if (x > 3) {
+        result = 1
+    } else {
+        result = 0
+    }
+    println(result)
+    return result
+}

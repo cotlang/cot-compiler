@@ -1,0 +1,94 @@
+// Test struct field copy through pointer (like p.previous = p.current)
+
+enum Kind {
+    A, B, C, D, E, F, G, H, I, J,
+    K, L, M, N, O, P, Q, R, S, T,
+}
+
+struct Token {
+    kind: Kind,
+    text: string,
+    line: i64,
+    col: i64,
+}
+
+struct Lexer {
+    src: string,
+    pos: i64,
+}
+
+struct Parser {
+    lexer: Lexer,
+    current: Token,
+    previous: Token,
+    flag: bool,
+}
+
+fn scan(lex: *Lexer) Token {
+    lex.pos = lex.pos + 1
+    println("  scan: pos=" + string(lex.pos))
+    if (lex.pos >= 5) {
+        return Token{.kind = Kind.T, .text = "EOF", .line = 1, .col = lex.pos}
+    }
+    return Token{.kind = Kind.A, .text = "tok" + string(lex.pos), .line = 1, .col = lex.pos}
+}
+
+fn advance(p: *Parser) {
+    println("advance: copying current to previous...")
+    println("  current.kind=" + string(p.current.kind as i64) + " text='" + p.current.text + "'")
+
+    p.previous = p.current
+
+    println("  previous.kind=" + string(p.previous.kind as i64) + " text='" + p.previous.text + "'")
+
+    println("advance: getting next token...")
+    p.current = scan(&p.lexer)
+
+    println("  new current.kind=" + string(p.current.kind as i64) + " text='" + p.current.text + "'")
+}
+
+fn isAtEnd(p: *Parser) bool {
+    var result = p.current.kind == Kind.T
+    println("isAtEnd: kind=" + string(p.current.kind as i64) + " T=" + string(Kind.T as i64) + " result=" + string(result))
+    return result
+}
+
+fn main() i64 {
+    println("Testing struct field copy through pointer...")
+
+    var lex = Lexer{.src = "test", .pos = 0}
+    var first = scan(&lex)
+
+    var parser = Parser{
+        .lexer = lex,
+        .current = first,
+        .previous = first,
+        .flag = false,
+    }
+
+    println("")
+    println("Initial state:")
+    println("  parser.current.kind=" + string(parser.current.kind as i64))
+    println("  parser.current.text='" + parser.current.text + "'")
+
+    var p = &parser
+    println("  p.current.kind=" + string(p.current.kind as i64))
+
+    println("")
+    println("=== Advancing ===")
+    var count: i64 = 0
+    while (!isAtEnd(p) and count < 10) {
+        println("--- Iteration " + string(count) + " ---")
+        advance(p)
+        count = count + 1
+    }
+
+    println("")
+    println("Final: count=" + string(count))
+    println("  p.current.kind=" + string(p.current.kind as i64))
+    println("  p.current.text='" + p.current.text + "'")
+
+    println("")
+    println("Done!")
+    return 0
+}

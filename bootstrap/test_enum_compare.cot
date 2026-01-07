@@ -1,0 +1,90 @@
+// Minimal reproducer for enum comparison bug
+
+enum Kind {
+    A, B, C, D, E, F, G, H, I, J,
+    K, L, M, N, O, P, Q, R, S, T,
+    U, V, W, X, Y, Z,
+}
+
+struct Token {
+    kind: Kind,
+    text: string,
+}
+
+// 8-field struct like Lexer
+struct Pad {
+    f1: string,
+    f2: i64,
+    f3: i64,
+    f4: i64,
+    f5: i64,
+    f6: i64,
+    f7: bool,
+    f8: i64,
+}
+
+struct Parser {
+    pad: Pad,
+    current: Token,
+    previous: Token,
+}
+
+fn checkKindMatch(p: *Parser, k: Kind) bool {
+    return p.current.kind == k
+}
+
+fn main() i64 {
+    println("Testing enum comparison bug...")
+
+    var pad = Pad{
+        .f1 = "src",
+        .f2 = 0,
+        .f3 = 0,
+        .f4 = 1,
+        .f5 = 1,
+        .f6 = 1,
+        .f7 = false,
+        .f8 = 0,
+    }
+
+    var tok = Token{
+        .kind = Kind.T,  // Value 19
+        .text = "test",
+    }
+
+    var parser = Parser{
+        .pad = pad,
+        .current = tok,
+        .previous = tok,
+    }
+
+    println("parser.current.kind = " + string(parser.current.kind as i64))
+    println("Kind.T = " + string(Kind.T as i64))
+
+    var p = &parser
+    println("p.current.kind = " + string(p.current.kind as i64))
+
+    // Direct comparison
+    var direct_eq = parser.current.kind == Kind.T
+    println("Direct: parser.current.kind == Kind.T: " + string(direct_eq))
+
+    // Through function call
+    var func_eq = checkKindMatch(p, Kind.T)
+    println("Function: checkKindMatch(p, Kind.T): " + string(func_eq))
+
+    // In-function comparison with pointer access
+    var ptr_eq = p.current.kind == Kind.T
+    println("Pointer: p.current.kind == Kind.T: " + string(ptr_eq))
+
+    // Test with a different value
+    println("")
+    println("Testing with Kind.A (value 0):")
+    p.current.kind = Kind.A
+    println("p.current.kind = " + string(p.current.kind as i64))
+    println("checkKindMatch(p, Kind.A): " + string(checkKindMatch(p, Kind.A)))
+    println("p.current.kind == Kind.A: " + string(p.current.kind == Kind.A))
+
+    println("")
+    println("Done!")
+    return 0
+}

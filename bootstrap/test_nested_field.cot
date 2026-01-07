@@ -1,0 +1,43 @@
+// Test nested struct field access through pointer
+
+struct Inner {
+    value: i64,
+    name: string,
+}
+
+struct Outer {
+    prefix: i64,    // Field before inner
+    inner: Inner,   // Nested struct
+    suffix: i64,    // Field after inner
+}
+
+fn main() i64 {
+    println("Testing nested struct field access through pointer...")
+
+    var outer = Outer{
+        .prefix = 111,
+        .inner = Inner{
+            .value = 222,
+            .name = "hello",
+        },
+        .suffix = 333,
+    }
+
+    println("Direct access:")
+    println("  outer.prefix: " + string(outer.prefix))
+    println("  outer.inner.value: " + string(outer.inner.value))
+    println("  outer.inner.name: " + outer.inner.name)
+    println("  outer.suffix: " + string(outer.suffix))
+
+    println("")
+    println("Access through pointer:")
+    var p = &outer
+    println("  p.prefix: " + string(p.prefix))
+    println("  p.inner.value: " + string(p.inner.value))
+    println("  p.inner.name: " + p.inner.name)
+    println("  p.suffix: " + string(p.suffix))
+
+    println("")
+    println("Done!")
+    return 0
+}

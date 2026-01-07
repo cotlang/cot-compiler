@@ -1,0 +1,37 @@
+// Main imports both A and B
+
+import "enum_mod_a"
+import "enum_mod_b"
+
+fn main() i64 {
+    println("Testing cross-module enum comparison...")
+
+    var data = MyData{
+        .kind = MyKind.Two,
+        .value = 42,
+    }
+
+    var container = Container{
+        .prefix = 111,
+        .data = data,
+        .suffix = 333,
+    }
+
+    println("container.data.kind = " + string(container.data.kind as i64))
+    println("MyKind.Two = " + string(MyKind.Two as i64))
+
+    var c = &container
+    println("c.data.kind = " + string(c.data.kind as i64))
+
+    // Direct comparison (main module's view)
+    var direct = container.data.kind == MyKind.Two
+    println("Direct: container.data.kind == MyKind.Two: " + string(direct))
+
+    // Through function from module B
+    var func = checkKind(c, MyKind.Two)
+    println("Function: checkKind(c, MyKind.Two): " + string(func))
+
+    println("")
+    println("Done!")
+    return 0
+}

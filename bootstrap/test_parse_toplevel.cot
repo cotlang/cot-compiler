@@ -1,0 +1,41 @@
+// Test calling parserParseTopLevel
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn wrapperWithTopLevel(p: *Parser) bool {
+    println("Creating local module...")
+    var mod = newModule()
+    println("Module created")
+
+    println("Calling parserIsAtEnd...")
+    var at_end = parserIsAtEnd(p)
+    println("At end: " + string(at_end as i64))
+
+    println("Calling parserParseTopLevel...")
+    var stmt: ?Stmt = parserParseTopLevel(p)
+    println("parserParseTopLevel done")
+
+    println("Checking if stmt is null...")
+    if (stmt != null) {
+        println("Got a statement!")
+    } else {
+        println("Statement is null")
+    }
+
+    return true
+}
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Calling wrapper...")
+    const result = wrapperWithTopLevel(&p)
+    println("Done!")
+    return 0
+}

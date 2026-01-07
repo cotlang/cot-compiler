@@ -1,0 +1,54 @@
+// Debug version of driver
+
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+fn main() i64 {
+    println("=== Debug Driver ===")
+
+    const source = "fn add(a: i64) i64 { return a }"
+    println("Source: " + source)
+    println("")
+
+    // Create parser
+    println("Creating parser...")
+    var parser = newParser(source)
+    println("Parser created")
+
+    // Debug initial token
+    println("Initial parser.current.token_type: " + string(parser.current.token_type as i64))
+    println("Initial parser.current.lexeme: '" + parser.current.lexeme + "'")
+    println("Expected: KwFn = 60, lexeme = 'fn'")
+
+    println("")
+    println("Taking pointer to parser...")
+    var p = &parser
+    println("p.current.token_type: " + string(p.current.token_type as i64))
+    println("p.current.lexeme: '" + p.current.lexeme + "'")
+
+    println("")
+    println("Testing parserIsAtEnd...")
+    var is_end = parserIsAtEnd(p)
+    println("parserIsAtEnd = " + string(is_end))
+    println("Expected: false (since we have 'fn' not 'Eof')")
+
+    println("")
+    println("Testing parserCheck for KwFn...")
+    var is_fn = parserCheck(p, TokenType.KwFn)
+    println("parserCheck(KwFn) = " + string(is_fn))
+    println("Expected: true")
+
+    println("")
+    println("Testing parserAdvance...")
+    parserAdvance(p)
+    println("After advance:")
+    println("  p.current.token_type: " + string(p.current.token_type as i64))
+    println("  p.current.lexeme: '" + p.current.lexeme + "'")
+    println("Expected: Identifier = 0, lexeme = 'add'")
+
+    println("")
+    println("Done!")
+    return 0
+}

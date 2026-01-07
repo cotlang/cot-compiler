@@ -1,0 +1,111 @@
+// Bootstrap Test: Parser Module
+// Tests the parser to verify it can parse simple programs
+
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("=== Bootstrap Parser Test ===")
+
+    // Test 1: Parse a simple function
+    const source1 = "fn main() i64 { return 42 }"
+    println("Test 1: Parsing: " + source1)
+
+    var p1 = newParser(source1)
+    const mod1 = parserParseModule(&p1)
+
+    if (mod1.has_errors) {
+        println("ERROR: Parser had errors")
+        return 1
+    }
+
+    const count1 = mod1.statements.len()
+    println("Parsed " + string(count1) + " top-level statement(s)")
+
+    if (count1 != 1) {
+        println("ERROR: Expected 1 statement, got " + string(count1))
+        return 1
+    }
+
+    // Check the statement type
+    const stmt1 = mod1.statements.get(0)
+    if (stmt1.kind == StmtKind.FunctionDecl) {
+        println("OK: Found function declaration")
+        println("    Name: " + stmt1.fn_name)
+    } else {
+        println("ERROR: Expected FunctionDecl, got " + string(stmt1.kind as i64))
+        return 1
+    }
+
+    // Test 2: Parse multiple declarations
+    const source2 = "struct Point { x: i64, y: i64 }\nfn main() i64 { return 0 }"
+    println("\nTest 2: Parsing struct and function")
+
+    var p2 = newParser(source2)
+    const mod2 = parserParseModule(&p2)
+
+    if (mod2.has_errors) {
+        println("ERROR: Parser had errors")
+        return 1
+    }
+
+    const count2 = mod2.statements.len()
+    println("Parsed " + string(count2) + " top-level statement(s)")
+
+    if (count2 != 2) {
+        println("ERROR: Expected 2 statements, got " + string(count2))
+        return 1
+    }
+
+    const stmt2a = mod2.statements.get(0)
+    if (stmt2a.kind == StmtKind.StructDecl) {
+        println("OK: Found struct declaration")
+        println("    Name: " + stmt2a.struct_name)
+    } else {
+        println("ERROR: Expected StructDecl, got " + string(stmt2a.kind as i64))
+        return 1
+    }
+
+    const stmt2b = mod2.statements.get(1)
+    if (stmt2b.kind == StmtKind.FunctionDecl) {
+        println("OK: Found function declaration")
+        println("    Name: " + stmt2b.fn_name)
+    } else {
+        println("ERROR: Expected FunctionDecl, got " + string(stmt2b.kind as i64))
+        return 1
+    }
+
+    // Test 3: Parse import statement
+    const source3 = "import \"token\"\nfn foo() { }"
+    println("\nTest 3: Parsing import and function")
+
+    var p3 = newParser(source3)
+    const mod3 = parserParseModule(&p3)
+
+    if (mod3.has_errors) {
+        println("ERROR: Parser had errors")
+        return 1
+    }
+
+    const count3 = mod3.statements.len()
+    println("Parsed " + string(count3) + " top-level statement(s)")
+
+    if (count3 != 2) {
+        println("ERROR: Expected 2 statements, got " + string(count3))
+        return 1
+    }
+
+    const stmt3a = mod3.statements.get(0)
+    if (stmt3a.kind == StmtKind.ImportStmt) {
+        println("OK: Found import statement")
+        println("    Path: " + stmt3a.import_path)
+    } else {
+        println("ERROR: Expected ImportStmt, got " + string(stmt3a.kind as i64))
+        return 1
+    }
+
+    println("\n=== All Parser Tests Passed ===")
+    return 0
+}

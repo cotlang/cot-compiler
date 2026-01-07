@@ -1,0 +1,32 @@
+// Bootstrap Test: Lexer Module
+// Tests the token and lexer modules to verify they work correctly
+
+// Import the modules
+import "../src/token"
+import "../src/lexer"
+
+fn main() i64 {
+    println("=== Bootstrap Lexer Test ===")
+
+    // Test 1: Create a simple lexer
+    const source = "const x = 42"
+    var lex = newLexer(source)
+    println("Created lexer for: " + source)
+
+    // Test 2: Scan tokens
+    var count = 0
+    while (!lexerIsAtEnd(&lex)) {
+        const tok = lexerScanToken(&lex)
+        // Print token type as integer (no tokenTypeName function available)
+        println("Token type: " + string(tok.token_type as i64) + " lexeme: " + tok.lexeme)
+        count = count + 1
+        if (count > 10) {
+            println("Safety limit reached")
+            return 1
+        }
+    }
+
+    println("Total tokens: " + string(count))
+    println("=== Test Complete ===")
+    return 0
+}

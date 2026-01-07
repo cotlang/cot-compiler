@@ -1,0 +1,20 @@
+// Test parserIsAtEnd
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Calling parserIsAtEnd...")
+    const at_end = parserIsAtEnd(&p)
+    println("At end: " + string(at_end as i64))
+
+    println("Done!")
+    return 0
+}

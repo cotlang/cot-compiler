@@ -1,0 +1,43 @@
+// Debug lexer identifier scanning
+fn main() i64 {
+    const source = "const"
+
+    // Test peek at position 1
+    const ch1 = source[1..2]
+    println("ch1 (should be 'o'): " + ch1)
+
+    // Test isAlpha on 'o'
+    if ((ch1 >= "a" and ch1 <= "z") or (ch1 >= "A" and ch1 <= "Z")) {
+        println("ch1 is alpha: true")
+    } else {
+        println("ch1 is alpha: false")
+    }
+
+    // Test loop condition
+    var current: i64 = 1
+    var count: i64 = 0
+    while (current < len(source)) {
+        const ch = source[current..current + 1]
+        println("char at " + string(current) + ": " + ch)
+
+        // Test isAlphaNumeric
+        const is_alpha = (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+        const is_digit = ch >= "0" and ch <= "9"
+        if (is_alpha or is_digit) {
+            println("  isAlphaNumeric: true")
+        } else {
+            println("  isAlphaNumeric: false")
+            return 1  // Break on first non-alphanumeric
+        }
+
+        current = current + 1
+        count = count + 1
+        if (count > 10) {
+            println("Safety limit")
+            return 1
+        }
+    }
+
+    println("Processed " + string(count) + " alphanumeric chars")
+    return 0
+}

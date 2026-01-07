@@ -1,0 +1,122 @@
+// Test with exact Parser struct layout
+
+enum TokType {
+    Ident,
+    Num,
+    Plus,
+    LBrace,
+    RBrace,
+    Eof,
+}
+
+struct Tok {
+    typ: TokType,
+    lex: string,
+    line: i64,
+    col: i64,
+}
+
+// Lexer with 8 fields like the real one
+struct Lex {
+    source: string,
+    start: i64,
+    current: i64,
+    line: i64,
+    column: i64,
+    start_column: i64,
+    in_interp: bool,
+    interp_depth: i64,
+}
+
+// Parser with same layout
+struct Par {
+    lexer: Lex,        // 8 fields
+    current: Tok,      // 4 fields
+    previous: Tok,     // 4 fields
+    had_error: bool,
+    panic_mode: bool,
+}
+
+fn lexScan(l: *Lex) Tok {
+    l.current = l.current + 1
+    println("  lexScan: pos=" + string(l.current))
+
+    if (l.current >= 5) {
+        println("  lexScan: returning Eof")
+        return Tok{.typ = TokType.Eof, .lex = "", .line = 1, .col = l.current}
+    }
+
+    return Tok{.typ = TokType.Ident, .lex = "tok" + string(l.current), .line = 1, .col = l.current}
+}
+
+fn parAdvance(p: *Par) {
+    println("parAdvance called")
+    println("  before: p.current.typ = " + string(p.current.typ as i64) + ", lex = '" + p.current.lex + "'")
+
+    p.previous = p.current
+    p.current = lexScan(&p.lexer)
+
+    println("  after:  p.current.typ = " + string(p.current.typ as i64) + ", lex = '" + p.current.lex + "'")
+}
+
+fn parIsAtEnd(p: *Par) bool {
+    var result = p.current.typ == TokType.Eof
+    println("parIsAtEnd: typ=" + string(p.current.typ as i64) + " Eof=" + string(TokType.Eof as i64) + " result=" + string(result))
+    return result
+}
+
+fn parCheck(p: *Par, typ: TokType) bool {
+    var result = p.current.typ == typ
+    println("parCheck: current.typ=" + string(p.current.typ as i64) + " check=" + string(typ as i64) + " result=" + string(result))
+    return result
+}
+
+fn main() i64 {
+    println("Testing parser struct layout...")
+
+    var lex = Lex{
+        .source = "test",
+        .start = 0,
+        .current = 0,
+        .line = 1,
+        .column = 1,
+        .start_column = 1,
+        .in_interp = false,
+        .interp_depth = 0,
+    }
+
+    var first = lexScan(&lex)
+    println("First token: typ=" + string(first.typ as i64) + " lex='" + first.lex + "'")
+
+    var parser = Par{
+        .lexer = lex,
+        .current = first,
+        .previous = first,
+        .had_error = false,
+        .panic_mode = false,
+    }
+
+    println("")
+    println("Parser created")
+    println("parser.current.typ = " + string(parser.current.typ as i64))
+
+    var p = &parser
+    println("p.current.typ = " + string(p.current.typ as i64))
+
+    println("")
+    println("=== Loop Test ===")
+    var count: i64 = 0
+    while (!parCheck(p, TokType.RBrace) and !parIsAtEnd(p) and count < 10) {
+        println("--- Iteration " + string(count) + " ---")
+        parAdvance(p)
+        count = count + 1
+    }
+
+    println("")
+    println("Exited loop after " + string(count) + " iterations")
+    println("Final p.current.typ = " + string(p.current.typ as i64))
+
+    println("")
+    println("Done!")
+    return 0
+}

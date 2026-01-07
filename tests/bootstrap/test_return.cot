@@ -1,0 +1,6 @@
+// Test 1: Just return a constant
+fn main() i64 {
+    const result = 42
+    println(result)
+    return result
+}

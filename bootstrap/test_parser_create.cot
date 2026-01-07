@@ -1,0 +1,23 @@
+// Test just parser creation
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Checking had_error: " + string(p.had_error as i64))
+    println("Checking panic_mode: " + string(p.panic_mode as i64))
+
+    println("Checking current token type...")
+    const tt = p.current.token_type
+    println("Token type: " + string(tt as i64))
+
+    println("Done!")
+    return 0
+}

@@ -1,0 +1,20 @@
+// Test string slicing
+fn main() i64 {
+    const source = "hello"
+
+    // Method 1: direct slice
+    const slice1 = source[0..1]
+    println("slice1: " + string(slice1))
+
+    // Method 2: try different range
+    const slice2 = source[0..5]
+    println("slice2: " + string(slice2))
+
+    // Method 3: use substr if available
+    // const slice3 = substr(source, 0, 1)
+
+    // Print length
+    println("len(source): " + string(len(source)))
+
+    return 0
+}

@@ -185,6 +185,12 @@ enum IROp {
 
     // Debug
     DebugLine,
+
+    // Slicing
+    SliceNew,        // Create slice from array/slice[start..end]
+
+    // Error handling
+    ErrThrow,        // Throw an error
 }
 
 // Comparison condition codes
@@ -248,6 +254,7 @@ fn isTerminator(op: IROp) bool {
         IROp.BrIf => { return true }
         IROp.BrTable => { return true }
         IROp.Ret => { return true }
+        IROp.ErrThrow => { return true }
         else => { return false }
     }
 }
@@ -259,6 +266,7 @@ fn producesValue(op: IROp) bool {
         IROp.BrIf => { return false }
         IROp.BrTable => { return false }
         IROp.Ret => { return false }
+        IROp.ErrThrow => { return false }
         IROp.ArrayStore => { return false }
         IROp.ListPush => { return false }
         IROp.ListSet => { return false }

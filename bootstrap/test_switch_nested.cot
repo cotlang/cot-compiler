@@ -1,0 +1,76 @@
+// Test switch on nested struct field through pointer
+
+enum Kind {
+    A,
+    B,
+    C,
+    D,
+}
+
+struct Inner {
+    kind: Kind,
+    value: i64,
+}
+
+struct Outer {
+    prefix: i64,
+    inner: Inner,
+    suffix: i64,
+}
+
+fn testSwitch(p: *Outer) string {
+    // Copy to local first (like parser does)
+    var inner = p.inner
+
+    switch (inner.kind) {
+        Kind.A => { return "A" }
+        Kind.B => { return "B" }
+        Kind.C => { return "C" }
+        Kind.D => { return "D" }
+    }
+    return "unknown"
+}
+
+fn testSwitchDirect(p: *Outer) string {
+    // Access directly through pointer
+    switch (p.inner.kind) {
+        Kind.A => { return "A" }
+        Kind.B => { return "B" }
+        Kind.C => { return "C" }
+        Kind.D => { return "D" }
+    }
+    return "unknown"
+}
+
+fn main() i64 {
+    println("Testing switch on nested struct field...")
+
+    var outer = Outer{
+        .prefix = 111,
+        .inner = Inner{
+            .kind = Kind.C,
+            .value = 42,
+        },
+        .suffix = 333,
+    }
+
+    println("Direct field access: outer.inner.kind = " + string(outer.inner.kind as i64))
+
+    var p = &outer
+    println("Through pointer: p.inner.kind = " + string(p.inner.kind as i64))
+
+    println("")
+    println("testSwitch (copy to local): " + testSwitch(p))
+    println("testSwitchDirect: " + testSwitchDirect(p))
+
+    println("")
+    println("Changing kind to B...")
+    p.inner.kind = Kind.B
+    println("p.inner.kind = " + string(p.inner.kind as i64))
+    println("testSwitch: " + testSwitch(p))
+    println("testSwitchDirect: " + testSwitchDirect(p))
+
+    println("")
+    println("Done!")
+    return 0
+}

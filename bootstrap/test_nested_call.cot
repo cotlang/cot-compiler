@@ -1,0 +1,27 @@
+// Test calling parserIsAtEnd from within a wrapper function
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn wrapperIsAtEnd(p: *Parser) bool {
+    println("In wrapper, calling parserIsAtEnd...")
+    const result = parserIsAtEnd(p)
+    println("parserIsAtEnd returned: " + string(result as i64))
+    return result
+}
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Calling wrapper...")
+    const at_end = wrapperIsAtEnd(&p)
+    println("Wrapper returned: " + string(at_end as i64))
+
+    println("Done!")
+    return 0
+}

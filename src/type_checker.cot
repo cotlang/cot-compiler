@@ -1054,6 +1054,33 @@ fn tcCheckExpr(tc: TypeChecker, expr: Expr) i64 {
     if (expr.kind == ExprKind.ArrayInitExpr) {
         return tcCheckArrayInit(tc, expr)
     }
+    if (expr.kind == ExprKind.MethodCallExpr) {
+        return tcCheckMethodCallExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.IfExpr) {
+        return tcCheckIfExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.BlockExpr) {
+        return tcCheckBlockExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.SwitchExpr) {
+        return tcCheckSwitchExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.LambdaExpr) {
+        return tcCheckLambdaExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.RangeExpr) {
+        return tcCheckRangeExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.CastExpr) {
+        return tcCheckCastExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.SliceExpr) {
+        return tcCheckSliceExpr(tc, expr)
+    }
+    if (expr.kind == ExprKind.InterpStringExpr) {
+        return tcCheckInterpStringExpr(tc, expr)
+    }
 
     tcError(tc, expr.loc.line, "Unhandled expression kind")
     return tc.reg.error_id
@@ -1601,6 +1628,238 @@ fn tcCheckComptimeStmt(tc: TypeChecker, stmt: Stmt) {
     if (stmt.comptime_else != null) {
         tcCheckStatement(tc, stmt.comptime_else.*)
     }
+}
+
+// =============================================================================
+// Additional Expression Checkers
+// =============================================================================
+
+// Check method call: obj.method(args)
+fn tcCheckMethodCallExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Get object type
+    if (expr.object == null) {
+        tcError(tc, expr.loc.line, "Method call requires object")
+        return tc.reg.error_id
+    }
+    const obj_type_id = tcCheckExpr(tc, expr.object.*)
+
+    // Look up method on the type
+    const obj_type = regGetTypeById(tc.reg, obj_type_id)
+    const method_name = expr.field_name
+
+    // For now, allow any method call and return any type
+    // A full implementation would look up the method signature
+    // Check arguments
+    var i: i64 = 0
+    while (i < len(expr.args)) {
+        tcCheckExpr(tc, expr.args[i].*)
+        i = i + 1
+    }
+
+    // Return type would be looked up from method signature
+    // For bootstrap, return i64 as default
+    return tc.reg.i64_id
+}
+
+// Check if expression: if (cond) a else b
+fn tcCheckIfExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Check condition is bool
+    if (expr.condition != null) {
+        const cond_type_id = tcCheckExpr(tc, expr.condition.*)
+        if (cond_type_id != tc.reg.bool_id and not isErrorTypeId(tc.reg, cond_type_id)) {
+            tcError(tc, expr.loc.line, "If expression condition must be bool")
+        }
+    }
+
+    // Check then branch
+    var then_type_id = tc.reg.void_id
+    if (expr.then_branch != null) {
+        then_type_id = tcCheckExpr(tc, expr.then_branch.*)
+    }
+
+    // Check else branch
+    var else_type_id = tc.reg.void_id
+    if (expr.else_branch != null) {
+        else_type_id = tcCheckExpr(tc, expr.else_branch.*)
+    }
+
+    // Both branches should have compatible types
+    if (then_type_id != else_type_id) {
+        // Allow if one is void
+        if (then_type_id != tc.reg.void_id and else_type_id != tc.reg.void_id) {
+            tcError(tc, expr.loc.line, "If expression branches have different types")
+        }
+    }
+
+    return then_type_id
+}
+
+// Check block expression: { stmts; result }
+fn tcCheckBlockExpr(tc: TypeChecker, expr: Expr) i64 {
+    smEnterScope(tc.scopes)
+
+    // Check all statements in block
+    var i: i64 = 0
+    while (i < len(expr.stmts)) {
+        tcCheckStatement(tc, expr.stmts[i].*)
+        i = i + 1
+    }
+
+    // Check result expression
+    var result_type_id = tc.reg.void_id
+    if (expr.result != null) {
+        result_type_id = tcCheckExpr(tc, expr.result.*)
+    }
+
+    smExitScope(tc.scopes)
+    return result_type_id
+}
+
+// Check switch expression
+fn tcCheckSwitchExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Check the match expression
+    if (expr.condition != null) {
+        tcCheckExpr(tc, expr.condition.*)
+    }
+
+    // Check each arm - would need to look at switch_arms field
+    // For bootstrap, return i64 as default
+    return tc.reg.i64_id
+}
+
+// Check lambda expression: |params| { body }
+fn tcCheckLambdaExpr(tc: TypeChecker, expr: Expr) i64 {
+    smEnterScope(tc.scopes)
+
+    // Register parameters
+    var i: i64 = 0
+    while (i < len(expr.params)) {
+        const param = expr.params[i]
+        var param_type_id = tc.reg.i64_id  // Default
+        if (param.param_type != null) {
+            param_type_id = tcResolveType(tc, param.param_type.*)
+        }
+
+        const sym = Symbol{
+            .name = param.name,
+            .kind = SymbolKind.Variable,
+            .type_id = param_type_id,
+            .mutable = false,
+            .line = expr.loc.line,
+            .valid = true,
+        }
+        smDefine(tc.scopes, param.name, sym)
+        i = i + 1
+    }
+
+    // Check body
+    var return_type_id = tc.reg.void_id
+    if (expr.body != null) {
+        return_type_id = tcCheckExpr(tc, expr.body.*)
+    }
+
+    smExitScope(tc.scopes)
+
+    // Return a function type (simplified for bootstrap)
+    return tc.reg.i64_id  // Would create proper function type
+}
+
+// Check range expression: start..end or start..=end
+fn tcCheckRangeExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Check start
+    if (expr.range_start != null) {
+        const start_type = tcCheckExpr(tc, expr.range_start.*)
+        if (not regIsIntegerType(tc.reg, start_type) and not isErrorTypeId(tc.reg, start_type)) {
+            tcError(tc, expr.loc.line, "Range start must be integer")
+        }
+    }
+
+    // Check end
+    if (expr.range_end != null) {
+        const end_type = tcCheckExpr(tc, expr.range_end.*)
+        if (not regIsIntegerType(tc.reg, end_type) and not isErrorTypeId(tc.reg, end_type)) {
+            tcError(tc, expr.loc.line, "Range end must be integer")
+        }
+    }
+
+    // Return i64 for range (would be a Range type in full impl)
+    return tc.reg.i64_id
+}
+
+// Check cast expression: expr as Type
+fn tcCheckCastExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Check the source expression
+    if (expr.operand != null) {
+        tcCheckExpr(tc, expr.operand.*)
+    }
+
+    // Resolve the target type
+    if (expr.cast_type != null) {
+        const target_type_id = tcResolveType(tc, expr.cast_type.*)
+        return target_type_id
+    }
+
+    return tc.reg.error_id
+}
+
+// Check slice expression: expr[start..end]
+fn tcCheckSliceExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Check the source expression
+    var src_type_id = tc.reg.error_id
+    if (expr.object != null) {
+        src_type_id = tcCheckExpr(tc, expr.object.*)
+    }
+
+    // Check start index
+    if (expr.slice_start != null) {
+        const start_type = tcCheckExpr(tc, expr.slice_start.*)
+        const start_type_info = regGetType(tc.reg, start_type)
+        if (not isIntegerType(start_type_info) and not isErrorTypeId(tc.reg, start_type)) {
+            tcError(tc, expr.loc.line, "Slice start must be integer")
+        }
+    }
+
+    // Check end index
+    if (expr.slice_end != null) {
+        const end_type = tcCheckExpr(tc, expr.slice_end.*)
+        const end_type_info = regGetType(tc.reg, end_type)
+        if (not isIntegerType(end_type_info) and not isErrorTypeId(tc.reg, end_type)) {
+            tcError(tc, expr.loc.line, "Slice end must be integer")
+        }
+    }
+
+    // Determine result type - slicing produces a slice
+    if (isErrorTypeId(tc.reg, src_type_id)) {
+        return tc.reg.error_id
+    }
+
+    const src_type = regGetType(tc.reg, src_type_id)
+
+    // Array or slice -> slice of element type
+    if (src_type.tag == TypeTag.Array or src_type.tag == TypeTag.Slice) {
+        return regAddSliceType(tc.reg, src_type.element_type_id)
+    }
+
+    // String -> string (substring)
+    if (src_type_id == tc.reg.string_id) {
+        return tc.reg.string_id
+    }
+
+    tcError(tc, expr.loc.line, "Cannot slice ${typeToString(tc.reg, src_type_id)}")
+    return tc.reg.error_id
+}
+
+// Check interpolated string expression: "Hello ${name}!"
+fn tcCheckInterpStringExpr(tc: TypeChecker, expr: Expr) i64 {
+    // Check all interpolated parts
+    var i: i64 = 0
+    while (i < len(expr.elements)) {
+        tcCheckExpr(tc, expr.elements[i].*)
+        i = i + 1
+    }
+
+    // Interpolated strings always produce strings
+    return tc.reg.string_id
 }
 
 // =============================================================================

@@ -1,0 +1,26 @@
+// Test small struct return (8 fields fits in registers)
+import "../src/token"
+import "../src/lexer"
+
+fn main() i64 {
+    println("Creating lexer...")
+
+    const source = "fn main() { }"
+    var l = newLexer(source)
+    println("Lexer created")
+
+    println("Checking l.source...")
+    const src = l.source
+    println("Source: " + src)
+
+    println("Checking l.current...")
+    const pos = l.current
+    println("Current: " + string(pos))
+
+    println("Checking l.line...")
+    const line = l.line
+    println("Line: " + string(line))
+
+    println("Done!")
+    return 0
+}

@@ -1,0 +1,13 @@
+// Test 9: Recursive function (expected: 55 = fib(10))
+fn fib(n: i64) i64 {
+    if (n <= 1) {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() i64 {
+    const result = fib(10)
+    println(result)
+    return result
+}

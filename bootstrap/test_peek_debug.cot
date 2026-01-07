@@ -1,0 +1,35 @@
+// Debug parserPeek
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn debugPeek(p: *Parser) TokenType {
+    println("In debugPeek, about to access p.current.token_type...")
+    const tt = p.current.token_type
+    println("Token type raw value: " + string(tt as i64))
+    return tt
+}
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Direct access to p.current.token_type...")
+    const tok1 = p.current.token_type
+    println("Direct token type: " + string(tok1 as i64))
+
+    println("Calling debugPeek...")
+    const tok2 = debugPeek(&p)
+    println("debugPeek returned: " + string(tok2 as i64))
+
+    println("After debugPeek, direct access again...")
+    const tok3 = p.current.token_type
+    println("Direct token type after: " + string(tok3 as i64))
+
+    println("Done!")
+    return 0
+}

@@ -1,0 +1,33 @@
+// Minimal parser test
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("Starting parser test...")
+
+    const source = "fn main() i64 { return 42 }"
+    println("Source: " + source)
+
+    var p = newParser(source)
+    println("Parser created")
+
+    const mod = parserParseModule(&p)
+    println("Module parsed")
+
+    println("has_errors: " + string(mod.has_errors as i64))
+
+    const count = mod.statements.len()
+    println("Statement count: " + string(count))
+
+    if (count > 0) {
+        println("Getting first statement...")
+        const stmt = mod.statements.get(0)
+        println("Got statement")
+        println("Kind: " + string(stmt.kind as i64))
+    }
+
+    println("Done!")
+    return 0
+}

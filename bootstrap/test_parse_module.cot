@@ -1,0 +1,23 @@
+// Test parserParseModule
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Calling parserParseModule...")
+    const mod = parserParseModule(&p)
+    println("Module parsed!")
+
+    println("has_errors: " + string(mod.has_errors as i64))
+    println("statement count: " + string(mod.statements.len()))
+
+    println("Done!")
+    return 0
+}

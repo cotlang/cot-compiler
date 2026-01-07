@@ -1,0 +1,13 @@
+// Test 9b: Simple recursive function (expected: 10 = 5+4+3+2+1+0)
+fn countdown(n: i64) i64 {
+    if (n <= 0) {
+        return 0
+    }
+    return n + countdown(n - 1)
+}
+
+fn main() i64 {
+    const result = countdown(4)
+    println(result)
+    return result
+}

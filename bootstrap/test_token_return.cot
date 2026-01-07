@@ -1,0 +1,23 @@
+// Test Token struct return directly
+import "../src/token"
+import "../src/lexer"
+
+fn main() i64 {
+    println("Testing Token return...")
+
+    const source = "fn main() { }"
+    var lex = newLexer(source)
+    println("Lexer created")
+
+    println("Calling lexerScanToken...")
+    var token = lexerScanToken(&lex)
+    println("Token returned")
+
+    println("Token type: " + string(token.token_type as i64))
+    println("Lexeme: " + token.lexeme)
+    println("Line: " + string(token.line))
+    println("Column: " + string(token.column))
+
+    println("Done!")
+    return 0
+}

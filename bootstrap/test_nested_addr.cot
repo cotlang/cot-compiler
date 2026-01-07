@@ -1,0 +1,57 @@
+// Test address-of nested field through pointer
+
+struct Counter {
+    count: i64,
+    name: string,
+}
+
+struct Wrapper {
+    prefix: i64,
+    counter: Counter,
+    suffix: i64,
+}
+
+fn incrementCounter(c: *Counter) {
+    c.count = c.count + 1
+    println("  Inside incrementCounter: count = " + string(c.count))
+}
+
+fn main() i64 {
+    println("Testing address-of nested field through pointer...")
+
+    var wrapper = Wrapper{
+        .prefix = 111,
+        .counter = Counter{
+            .count = 0,
+            .name = "test",
+        },
+        .suffix = 333,
+    }
+
+    println("Initial count: " + string(wrapper.counter.count))
+
+    // Get pointer to wrapper
+    var p = &wrapper
+
+    println("")
+    println("Calling incrementCounter(&p.counter)...")
+    incrementCounter(&p.counter)
+
+    println("")
+    println("After increment:")
+    println("  wrapper.counter.count: " + string(wrapper.counter.count))
+    println("  p.counter.count: " + string(p.counter.count))
+
+    println("")
+    println("Calling incrementCounter(&p.counter) again...")
+    incrementCounter(&p.counter)
+
+    println("")
+    println("After second increment:")
+    println("  wrapper.counter.count: " + string(wrapper.counter.count))
+    println("  p.counter.count: " + string(p.counter.count))
+
+    println("")
+    println("Done!")
+    return 0
+}

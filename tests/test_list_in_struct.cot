@@ -1,0 +1,35 @@
+// Minimal test: List inside a struct passed as pointer
+
+struct Container {
+    items: List<i64>,
+    name: string,
+}
+
+fn newContainer() Container {
+    return Container{
+        .items = List.new(),
+        .name = "test",
+    }
+}
+
+fn addItem(c: *Container, value: i64) {
+    c.items.push(value)
+}
+
+fn getCount(c: *Container) i64 {
+    return c.items.len()
+}
+
+fn main() {
+    println("=== List in Struct Test ===")
+
+    var c: Container = newContainer()
+    println("Created container: " + c.name)
+
+    println("Initial count: " + string(c.items.len()))
+
+    addItem(&c, 42)
+    println("After add, count: " + string(getCount(&c)))
+
+    println("=== Done ===")
+}

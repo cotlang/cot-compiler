@@ -1,0 +1,29 @@
+// Test the real parser with debugging
+import "../src/token"
+import "../src/lexer"
+
+fn main() i64 {
+    println("Testing real parser...")
+
+    const source = "fn add(a: i64, b: i64) i64 { return a + b }"
+    println("Source: " + source)
+    println("")
+
+    // Test the lexer directly
+    println("=== Testing Lexer Directly ===")
+    var lex = newLexer(source)
+    var count: i64 = 0
+    while (count < 30) {
+        var tok = lexerScanToken(&lex)
+        println("Token " + string(count) + ": type=" + string(tok.token_type as i64) + " lexeme='" + tok.lexeme + "'")
+        if (tok.token_type == TokenType.Eof) {
+            println("Got EOF!")
+            break
+        }
+        count = count + 1
+    }
+
+    println("")
+    println("Done!")
+    return 0
+}

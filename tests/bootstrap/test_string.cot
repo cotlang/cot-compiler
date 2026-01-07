@@ -1,0 +1,7 @@
+// Test 12: String operations (expected: 5)
+fn main() i64 {
+    const s = "hello"
+    const result = len(s)
+    println(result)
+    return result
+}

@@ -56,7 +56,11 @@ fn parserAdvance(p: *Parser) {
 
 // Check if current token matches type
 fn parserCheck(p: *Parser, token_type: TokenType) bool {
-    return p.current.token_type == token_type
+    println("  [parserCheck] p.current.token_type = " + string(p.current.token_type as i64))
+    println("  [parserCheck] token_type param = " + string(token_type as i64))
+    var result = p.current.token_type == token_type
+    println("  [parserCheck] result = " + string(result))
+    return result
 }
 
 // Check if current token matches and advance if so
@@ -379,6 +383,11 @@ fn parseExprPrec(p: *Parser, min_prec: Precedence) Expr {
 
     // Parse infix and postfix operators while they have sufficient precedence
     while (true) {
+        // Exit if at end of input
+        if (parserIsAtEnd(p)) {
+            break
+        }
+
         var loc: SourceLoc = sourceLocFromToken(p.current)
 
         // Handle postfix operators (call, field access, index) at PrecCall level
@@ -2239,4 +2248,80 @@ fn makeViewDeclStmt(name: string, base_field: string, offset: i64, loc: SourceLo
     s.view_base_field = base_field
     s.view_offset = offset
     return s
+}
+
+// =============================================================================
+// Module-Level Parsing Entry Point
+// =============================================================================
+
+// Parse a complete module (file) and return all top-level declarations
+fn parserParseModule(p: *Parser) Module {
+    var mod = newModule()
+
+    while (!parserIsAtEnd(p)) {
+        var parsed_stmt: ?Stmt = parserParseTopLevel(p)
+        if (parsed_stmt != null) {
+            mod.statements.push(parsed_stmt ?? makeDefaultStmt(StmtKind.ExpressionStmt, newSourceLoc(0, 0, 0, 0)))
+        }
+
+        // If we're in panic mode, synchronize
+        if (p.panic_mode) {
+            parserSynchronize(p)
+        }
+    }
+
+    mod.has_errors = p.had_error
+    return mod
+}
+
+// Parse a single top-level declaration
+fn parserParseTopLevel(p: *Parser) ?Stmt {
+    const tok_type = parserPeek(p)
+
+    switch (tok_type) {
+        TokenType.KwFn => {
+            return parseFunctionDecl(p)
+        }
+        TokenType.KwStruct => {
+            return parseStructDecl(p)
+        }
+        TokenType.KwUnion => {
+            return parseUnionDecl(p)
+        }
+        TokenType.KwEnum => {
+            return parseEnumDecl(p)
+        }
+        TokenType.KwTrait => {
+            return parseTraitDecl(p)
+        }
+        TokenType.KwImpl => {
+            return parseImplDecl(p)
+        }
+        TokenType.KwConst => {
+            return parseConstDecl(p)
+        }
+        TokenType.KwVar => {
+            return parseVarDecl(p)
+        }
+        TokenType.KwType => {
+            return parseTypeAliasDecl(p)
+        }
+        TokenType.KwImport => {
+            return parseImportStmt(p)
+        }
+        TokenType.KwTest => {
+            return parseTestDecl(p)
+        }
+        TokenType.KwPub => {
+            return parsePubDecl(p)
+        }
+        TokenType.KwComptime => {
+            return parseComptimeStmt(p)
+        }
+    }
+
+    // Unexpected token at top level
+    parserErrorAtCurrent(p, "Expected 'fn', 'struct', 'enum', 'trait', 'impl', 'const', 'var', 'type', 'import', 'test', or 'pub' at top level")
+    parserAdvance(p)
+    return null
 }

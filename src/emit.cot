@@ -1,0 +1,1684 @@
+// Cot IR to Bytecode Emitter
+//
+// Transforms IR into bytecode that can be executed by the Cot VM.
+// This is the final stage of the self-hosted compiler pipeline.
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+// Module format magic number
+const MAGIC_MODULE: string = "CBO1"
+
+// Version
+const VERSION_MAJOR: i64 = 0
+const VERSION_MINOR: i64 = 1
+
+// Register conventions
+const REG_COUNT: i64 = 16
+const REG_RESERVED_FP: i64 = 14
+const REG_RESERVED_RET: i64 = 15
+const REG_USABLE_COUNT: i64 = 14
+
+// Opcode constants - now visible in function scopes
+const OP_NOP: i64 = 0
+const OP_HALT: i64 = 1
+const OP_MOV: i64 = 16
+const OP_MOVI: i64 = 17
+const OP_MOVI16: i64 = 18
+const OP_MOVI32: i64 = 19
+const OP_LOAD_CONST: i64 = 20
+const OP_LOAD_NULL: i64 = 21
+const OP_LOAD_TRUE: i64 = 22
+const OP_LOAD_FALSE: i64 = 23
+const OP_LOAD_LOCAL: i64 = 32
+const OP_STORE_LOCAL: i64 = 33
+const OP_LOAD_LOCAL16: i64 = 34
+const OP_STORE_LOCAL16: i64 = 35
+const OP_LOAD_GLOBAL: i64 = 36
+const OP_STORE_GLOBAL: i64 = 37
+const OP_ADD: i64 = 48
+const OP_SUB: i64 = 49
+const OP_MUL: i64 = 50
+const OP_DIV: i64 = 51
+const OP_MOD: i64 = 52
+const OP_NEG: i64 = 53
+const OP_CMP_EQ: i64 = 64
+const OP_CMP_NE: i64 = 65
+const OP_CMP_LT: i64 = 66
+const OP_CMP_LE: i64 = 67
+const OP_CMP_GT: i64 = 68
+const OP_CMP_GE: i64 = 69
+const OP_LOG_AND: i64 = 80
+const OP_LOG_OR: i64 = 81
+const OP_LOG_NOT: i64 = 82
+const OP_BIT_AND: i64 = 83
+const OP_BIT_OR: i64 = 84
+const OP_BIT_XOR: i64 = 85
+const OP_BIT_NOT: i64 = 86
+const OP_SHL: i64 = 90
+const OP_SHR: i64 = 91
+const OP_JMP: i64 = 96
+const OP_JZ: i64 = 98
+const OP_JNZ: i64 = 99
+const OP_CALL: i64 = 112
+const OP_CALL_NATIVE: i64 = 114
+const OP_RET: i64 = 117
+const OP_RET_VAL: i64 = 118
+const OP_NEW_RECORD: i64 = 128
+const OP_LOAD_FIELD: i64 = 130
+const OP_STORE_FIELD: i64 = 131
+const OP_STR_CONCAT: i64 = 144
+const OP_STR_LEN: i64 = 145
+const OP_LIST_LEN: i64 = 179
+const OP_PRINT: i64 = 208
+const OP_PRINTLN: i64 = 209
+const OP_MAP_NEW: i64 = 213
+const OP_MAP_SET: i64 = 214
+const OP_MAP_GET: i64 = 215
+const OP_MAP_DELETE: i64 = 216
+const OP_MAP_HAS: i64 = 217
+const OP_MAP_LEN: i64 = 218
+const OP_LIST_NEW: i64 = 237
+const OP_LIST_PUSH: i64 = 238
+const OP_LIST_POP: i64 = 239
+const OP_DEBUG_LINE: i64 = 241
+const OP_LIST_GET: i64 = 253
+const OP_LIST_SET: i64 = 255
+
+// =============================================================================
+// Constant Pool
+// =============================================================================
+
+enum ConstantTag {
+    Integer,
+    Decimal,
+    String,
+    FixedString,
+    Identifier,
+    RecordRef,
+    RoutineRef,
+    Float,
+    Boolean,
+}
+
+struct ConstantEntry {
+    tag: ConstantTag,
+    int_val: i64,
+    str_val: string,
+    float_val: f64,
+    bool_val: bool,
+    precision: i64,
+}
+
+fn newIntConstant(val: i64) ConstantEntry {
+    return ConstantEntry{
+        .tag = ConstantTag.Integer,
+        .int_val = val,
+        .str_val = "",
+        .float_val = 0.0,
+        .bool_val = false,
+        .precision = 0,
+    }
+}
+
+fn newStringConstant(val: string) ConstantEntry {
+    return ConstantEntry{
+        .tag = ConstantTag.String,
+        .int_val = 0,
+        .str_val = val,
+        .float_val = 0.0,
+        .bool_val = false,
+        .precision = 0,
+    }
+}
+
+fn newIdentifierConstant(val: string) ConstantEntry {
+    return ConstantEntry{
+        .tag = ConstantTag.Identifier,
+        .int_val = 0,
+        .str_val = val,
+        .float_val = 0.0,
+        .bool_val = false,
+        .precision = 0,
+    }
+}
+
+fn newFloatConstant(val: f64) ConstantEntry {
+    return ConstantEntry{
+        .tag = ConstantTag.Float,
+        .int_val = 0,
+        .str_val = "",
+        .float_val = val,
+        .bool_val = false,
+        .precision = 0,
+    }
+}
+
+fn newBoolConstant(val: bool) ConstantEntry {
+    return ConstantEntry{
+        .tag = ConstantTag.Boolean,
+        .int_val = 0,
+        .str_val = "",
+        .float_val = 0.0,
+        .bool_val = val,
+        .precision = 0,
+    }
+}
+
+// =============================================================================
+// Routine Definition
+// =============================================================================
+
+struct RoutineDef {
+    name_index: i64,
+    is_public: bool,
+    is_function: bool,
+    code_offset: i64,
+    code_length: i64,
+    param_count: i64,
+    local_count: i64,
+    max_stack: i64,
+}
+
+fn newRoutineDef(name_idx: i64) RoutineDef {
+    return RoutineDef{
+        .name_index = name_idx,
+        .is_public = false,
+        .is_function = false,
+        .code_offset = 0,
+        .code_length = 0,
+        .param_count = 0,
+        .local_count = 0,
+        .max_stack = 0,
+    }
+}
+
+// =============================================================================
+// Export Entry
+// =============================================================================
+
+enum ExportKind {
+    Routine,
+    Record,
+    Global,
+}
+
+struct ExportEntry {
+    name_index: i64,
+    kind: ExportKind,
+    index: i64,
+}
+
+// =============================================================================
+// Register Allocator
+// =============================================================================
+
+struct RegisterAllocator {
+    free_regs: i64,
+    value_to_reg: Map<i64, i64>,
+    reg_to_value: List<i64>,
+}
+
+fn newRegisterAllocator() RegisterAllocator {
+    const value_to_reg: Map<i64, i64> = Map.new()
+    const reg_to_value: List<i64> = List.new()
+
+    var i: i64 = 0
+    while (i < 16) {
+        reg_to_value.push(-1)
+        i = i + 1
+    }
+
+    return RegisterAllocator{
+        .free_regs = 16383,
+        .value_to_reg = value_to_reg,
+        .reg_to_value = reg_to_value,
+    }
+}
+
+fn regAllocReset(ra: RegisterAllocator) {
+    ra.free_regs = 16383
+    var i: i64 = 0
+    while (i < 16) {
+        ra.reg_to_value.set(i, -1)
+        i = i + 1
+    }
+}
+
+fn regAllocAllocate(ra: RegisterAllocator, value_id: i64) i64 {
+    var reg: i64 = 0
+    while (reg < 14) {
+        const mask: i64 = 1 << reg
+        if ((ra.free_regs & mask) != 0) {
+            ra.free_regs = ra.free_regs & (~mask)
+            ra.value_to_reg.set(value_id, reg)
+            ra.reg_to_value.set(reg, value_id)
+            return reg
+        }
+        reg = reg + 1
+    }
+    return -1
+}
+
+fn regAllocGetRegister(ra: RegisterAllocator, value_id: i64) i64 {
+    if (ra.value_to_reg.has(value_id)) {
+        return ra.value_to_reg.get(value_id)
+    }
+    return -1
+}
+
+fn regAllocFree(ra: RegisterAllocator, reg: i64) {
+    if (reg >= 14) {
+        return
+    }
+    const mask: i64 = 1 << reg
+    ra.free_regs = ra.free_regs | mask
+    const value_id = ra.reg_to_value.get(reg)
+    if (value_id >= 0) {
+        ra.value_to_reg.delete(value_id)
+    }
+    ra.reg_to_value.set(reg, -1)
+}
+
+fn regAllocFreeValue(ra: RegisterAllocator, value_id: i64) {
+    if (ra.value_to_reg.has(value_id)) {
+        const reg = ra.value_to_reg.get(value_id)
+        regAllocFree(ra, reg)
+    }
+}
+
+fn regAllocAssign(ra: RegisterAllocator, value_id: i64, reg: i64) {
+    if (reg >= 14) {
+        return
+    }
+    const mask: i64 = 1 << reg
+    ra.free_regs = ra.free_regs & (~mask)
+    ra.value_to_reg.set(value_id, reg)
+    ra.reg_to_value.set(reg, value_id)
+}
+
+// =============================================================================
+// Pending Jump
+// =============================================================================
+
+struct PendingJump {
+    patch_offset: i64,
+    target_block: i64,
+    is_wide: bool,
+}
+
+// =============================================================================
+// Variable Location
+// =============================================================================
+
+struct VarLocation {
+    slot: i64,
+    is_global: bool,
+}
+
+// =============================================================================
+// Bytecode Emitter
+// =============================================================================
+
+struct BytecodeEmitter {
+    code: List<i64>,
+    constants: List<ConstantEntry>,
+    routines: List<RoutineDef>,
+    exports: List<ExportEntry>,
+    globals: Map<string, VarLocation>,
+    locals: Map<string, VarLocation>,
+    global_count: i64,
+    local_count: i64,
+    string_pool: Map<string, i64>,
+    int_pool: Map<i64, i64>,
+    function_indices: Map<string, i64>,
+    block_offsets: Map<i64, i64>,
+    pending_jumps: List<PendingJump>,
+    value_slots: Map<i64, i64>,
+    current_routine_start: i64,
+    reg_alloc: RegisterAllocator,
+    spill_slot_base: i64,
+    next_spill_slot: i64,
+    max_spill_slots: i64,
+}
+
+fn newBytecodeEmitter() BytecodeEmitter {
+    const code: List<i64> = List.new()
+    const constants: List<ConstantEntry> = List.new()
+    const routines: List<RoutineDef> = List.new()
+    const exports: List<ExportEntry> = List.new()
+    const globals: Map<string, VarLocation> = Map.new()
+    const locals: Map<string, VarLocation> = Map.new()
+    const string_pool: Map<string, i64> = Map.new()
+    const int_pool: Map<i64, i64> = Map.new()
+    const function_indices: Map<string, i64> = Map.new()
+    const block_offsets: Map<i64, i64> = Map.new()
+    const pending_jumps: List<PendingJump> = List.new()
+    const value_slots: Map<i64, i64> = Map.new()
+    const reg_alloc = newRegisterAllocator()
+
+    return BytecodeEmitter{
+        .code = code,
+        .constants = constants,
+        .routines = routines,
+        .exports = exports,
+        .globals = globals,
+        .locals = locals,
+        .global_count = 0,
+        .local_count = 0,
+        .string_pool = string_pool,
+        .int_pool = int_pool,
+        .function_indices = function_indices,
+        .block_offsets = block_offsets,
+        .pending_jumps = pending_jumps,
+        .value_slots = value_slots,
+        .current_routine_start = 0,
+        .reg_alloc = reg_alloc,
+        .spill_slot_base = 0,
+        .next_spill_slot = 0,
+        .max_spill_slots = 0,
+    }
+}
+
+// =============================================================================
+// Constant Pool Management
+// =============================================================================
+
+fn emitAddString(e: BytecodeEmitter, s: string) i64 {
+    if (e.string_pool.has(s)) {
+        return e.string_pool.get(s)
+    }
+    const idx = e.constants.len()
+    const c = newStringConstant(s)
+    e.constants.push(c)
+    e.string_pool.set(s, idx)
+    return idx
+}
+
+fn emitAddIdentifier(e: BytecodeEmitter, s: string) i64 {
+    if (e.string_pool.has(s)) {
+        return e.string_pool.get(s)
+    }
+    const idx = e.constants.len()
+    const c = newIdentifierConstant(s)
+    e.constants.push(c)
+    e.string_pool.set(s, idx)
+    return idx
+}
+
+fn emitAddInt(e: BytecodeEmitter, val: i64) i64 {
+    if (e.int_pool.has(val)) {
+        return e.int_pool.get(val)
+    }
+    const idx = e.constants.len()
+    const c = newIntConstant(val)
+    e.constants.push(c)
+    e.int_pool.set(val, idx)
+    return idx
+}
+
+fn emitAddFloat(e: BytecodeEmitter, val: f64) i64 {
+    const idx = e.constants.len()
+    const c = newFloatConstant(val)
+    e.constants.push(c)
+    return idx
+}
+
+fn emitAddBool(e: BytecodeEmitter, val: bool) i64 {
+    const idx = e.constants.len()
+    const c = newBoolConstant(val)
+    e.constants.push(c)
+    return idx
+}
+
+// =============================================================================
+// Bytecode Emission Primitives
+// =============================================================================
+
+fn emitByte(e: BytecodeEmitter, b: i64) {
+    e.code.push(b & 255)
+}
+
+fn emitU16(e: BytecodeEmitter, val: i64) {
+    emitByte(e, val & 255)
+    emitByte(e, (val >> 8) & 255)
+}
+
+fn emitU32(e: BytecodeEmitter, val: i64) {
+    emitByte(e, val & 255)
+    emitByte(e, (val >> 8) & 255)
+    emitByte(e, (val >> 16) & 255)
+    emitByte(e, (val >> 24) & 255)
+}
+
+fn emitOpcode(e: BytecodeEmitter, op: i64) {
+    emitByte(e, op)
+}
+
+fn packRegs(r1: i64, r2: i64) i64 {
+    return ((r1 & 15) << 4) | (r2 & 15)
+}
+
+fn emitRegReg(e: BytecodeEmitter, op: i64, rd: i64, rs: i64) {
+    emitOpcode(e, op)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, 0)
+}
+
+fn emitRegImm8(e: BytecodeEmitter, op: i64, rd: i64, imm: i64) {
+    emitOpcode(e, op)
+    emitByte(e, packRegs(rd, 0))
+    emitByte(e, imm & 255)
+}
+
+fn emitRegU16(e: BytecodeEmitter, op: i64, rd: i64, val: i64) {
+    emitOpcode(e, op)
+    emitByte(e, packRegs(rd, 0))
+    emitU16(e, val)
+}
+
+fn emitReg3(e: BytecodeEmitter, op: i64, rd: i64, rs1: i64, rs2: i64) {
+    emitOpcode(e, op)
+    emitByte(e, packRegs(rd, rs1))
+    emitByte(e, packRegs(rs2, 0))
+}
+
+// =============================================================================
+// Instruction Emission Helpers
+// =============================================================================
+
+fn emitMov(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_MOV, rd, rs)
+}
+
+fn emitMovI(e: BytecodeEmitter, rd: i64, imm: i64) {
+    if (imm >= -128 and imm <= 127) {
+        emitRegImm8(e, OP_MOVI, rd, imm)
+    } else if (imm >= -32768 and imm <= 32767) {
+        emitRegU16(e, OP_MOVI16, rd, imm)
+    } else {
+        emitOpcode(e, OP_MOVI32)
+        emitByte(e, packRegs(rd, 0))
+        emitU32(e, imm)
+    }
+}
+
+fn emitLoadConst(e: BytecodeEmitter, rd: i64, idx: i64) {
+    emitRegU16(e, OP_LOAD_CONST, rd, idx)
+}
+
+fn emitLoadNull(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_LOAD_NULL, rd, 0)
+}
+
+fn emitLoadTrue(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_LOAD_TRUE, rd, 0)
+}
+
+fn emitLoadFalse(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_LOAD_FALSE, rd, 0)
+}
+
+fn emitLoadLocal(e: BytecodeEmitter, rd: i64, slot: i64) {
+    if (slot <= 255) {
+        emitRegImm8(e, OP_LOAD_LOCAL, rd, slot)
+    } else {
+        emitRegU16(e, OP_LOAD_LOCAL16, rd, slot)
+    }
+}
+
+fn emitStoreLocal(e: BytecodeEmitter, rs: i64, slot: i64) {
+    if (slot <= 255) {
+        emitRegImm8(e, OP_STORE_LOCAL, rs, slot)
+    } else {
+        emitRegU16(e, OP_STORE_LOCAL16, rs, slot)
+    }
+}
+
+fn emitLoadGlobal(e: BytecodeEmitter, rd: i64, idx: i64) {
+    emitRegU16(e, OP_LOAD_GLOBAL, rd, idx)
+}
+
+fn emitStoreGlobal(e: BytecodeEmitter, rs: i64, idx: i64) {
+    emitRegU16(e, OP_STORE_GLOBAL, rs, idx)
+}
+
+fn emitAdd(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_ADD, rd, rs1, rs2)
+}
+
+fn emitSub(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_SUB, rd, rs1, rs2)
+}
+
+fn emitMul(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_MUL, rd, rs1, rs2)
+}
+
+fn emitDiv(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_DIV, rd, rs1, rs2)
+}
+
+fn emitMod(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_MOD, rd, rs1, rs2)
+}
+
+fn emitNeg(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_NEG, rd, rs)
+}
+
+fn emitCmpEq(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_EQ, rd, rs1, rs2)
+}
+
+fn emitCmpNe(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_NE, rd, rs1, rs2)
+}
+
+fn emitCmpLt(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_LT, rd, rs1, rs2)
+}
+
+fn emitCmpLe(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_LE, rd, rs1, rs2)
+}
+
+fn emitCmpGt(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_GT, rd, rs1, rs2)
+}
+
+fn emitCmpGe(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_GE, rd, rs1, rs2)
+}
+
+fn emitLogAnd(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_LOG_AND, rd, rs1, rs2)
+}
+
+fn emitLogOr(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_LOG_OR, rd, rs1, rs2)
+}
+
+fn emitLogNot(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_LOG_NOT, rd, rs)
+}
+
+fn emitBitAnd(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_BIT_AND, rd, rs1, rs2)
+}
+
+fn emitBitOr(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_BIT_OR, rd, rs1, rs2)
+}
+
+fn emitBitXor(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_BIT_XOR, rd, rs1, rs2)
+}
+
+fn emitBitNot(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_BIT_NOT, rd, rs)
+}
+
+fn emitShl(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_SHL, rd, rs1, rs2)
+}
+
+fn emitShr(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_SHR, rd, rs1, rs2)
+}
+
+fn emitJmp(e: BytecodeEmitter, offset: i64) {
+    emitOpcode(e, OP_JMP)
+    emitByte(e, 0)
+    emitU16(e, offset)
+}
+
+fn emitJz(e: BytecodeEmitter, rs: i64, offset: i64) {
+    emitOpcode(e, OP_JZ)
+    emitByte(e, packRegs(rs, 0))
+    emitU16(e, offset)
+}
+
+fn emitJnz(e: BytecodeEmitter, rs: i64, offset: i64) {
+    emitOpcode(e, OP_JNZ)
+    emitByte(e, packRegs(rs, 0))
+    emitU16(e, offset)
+}
+
+fn emitCall(e: BytecodeEmitter, routine_idx: i64, argc: i64) {
+    emitOpcode(e, OP_CALL)
+    emitByte(e, packRegs(argc, 0))
+    emitU16(e, routine_idx)
+}
+
+fn emitCallNative(e: BytecodeEmitter, native_idx: i64, argc: i64) {
+    emitOpcode(e, OP_CALL_NATIVE)
+    emitByte(e, packRegs(argc, 0))
+    emitU16(e, native_idx)
+}
+
+fn emitRet(e: BytecodeEmitter) {
+    emitRegReg(e, OP_RET, 0, 0)
+}
+
+fn emitRetVal(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_RET_VAL, rs, 0)
+}
+
+fn emitNewRecord(e: BytecodeEmitter, rd: i64, type_idx: i64) {
+    emitRegU16(e, OP_NEW_RECORD, rd, type_idx)
+}
+
+fn emitLoadField(e: BytecodeEmitter, rd: i64, rs: i64, field_idx: i64) {
+    emitOpcode(e, OP_LOAD_FIELD)
+    emitByte(e, packRegs(rd, rs))
+    emitU16(e, field_idx)
+}
+
+fn emitStoreField(e: BytecodeEmitter, rd: i64, rs: i64, field_idx: i64) {
+    emitOpcode(e, OP_STORE_FIELD)
+    emitByte(e, packRegs(rd, rs))
+    emitU16(e, field_idx)
+}
+
+fn emitStrConcat(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_STR_CONCAT, rd, rs1, rs2)
+}
+
+fn emitStrLen(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_STR_LEN, rd, rs)
+}
+
+fn emitPrint(e: BytecodeEmitter, rs: i64, argc: i64) {
+    emitOpcode(e, OP_PRINT)
+    emitByte(e, packRegs(rs, argc))
+    emitByte(e, 0)
+}
+
+fn emitPrintln(e: BytecodeEmitter, rs: i64, argc: i64) {
+    emitOpcode(e, OP_PRINTLN)
+    emitByte(e, packRegs(rs, argc))
+    emitByte(e, 0)
+}
+
+fn emitListNew(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_LIST_NEW, rd, 0)
+}
+
+fn emitListPush(e: BytecodeEmitter, list_reg: i64, val_reg: i64) {
+    emitRegReg(e, OP_LIST_PUSH, list_reg, val_reg)
+}
+
+fn emitListPop(e: BytecodeEmitter, rd: i64, list_reg: i64) {
+    emitRegReg(e, OP_LIST_POP, rd, list_reg)
+}
+
+fn emitListGet(e: BytecodeEmitter, rd: i64, list_reg: i64, idx_reg: i64) {
+    emitOpcode(e, OP_LIST_GET)
+    emitByte(e, packRegs(rd, list_reg))
+    emitByte(e, packRegs(idx_reg, 0))
+}
+
+fn emitListSet(e: BytecodeEmitter, list_reg: i64, idx_reg: i64, val_reg: i64) {
+    emitOpcode(e, OP_LIST_SET)
+    emitByte(e, packRegs(list_reg, idx_reg))
+    emitByte(e, packRegs(val_reg, 0))
+}
+
+fn emitListLen(e: BytecodeEmitter, rd: i64, list_reg: i64) {
+    emitRegReg(e, OP_LIST_LEN, rd, list_reg)
+}
+
+fn emitMapNew(e: BytecodeEmitter, rd: i64, flags: i64) {
+    emitRegReg(e, OP_MAP_NEW, rd, flags)
+}
+
+fn emitMapSet(e: BytecodeEmitter, map_reg: i64, key_reg: i64, val_reg: i64) {
+    emitOpcode(e, OP_MAP_SET)
+    emitByte(e, packRegs(map_reg, key_reg))
+    emitByte(e, packRegs(val_reg, 0))
+}
+
+fn emitMapGet(e: BytecodeEmitter, rd: i64, map_reg: i64, key_reg: i64) {
+    emitOpcode(e, OP_MAP_GET)
+    emitByte(e, packRegs(rd, map_reg))
+    emitByte(e, packRegs(key_reg, 0))
+}
+
+fn emitMapHas(e: BytecodeEmitter, rd: i64, map_reg: i64, key_reg: i64) {
+    emitOpcode(e, OP_MAP_HAS)
+    emitByte(e, packRegs(rd, map_reg))
+    emitByte(e, packRegs(key_reg, 0))
+}
+
+fn emitMapLen(e: BytecodeEmitter, rd: i64, map_reg: i64) {
+    emitRegReg(e, OP_MAP_LEN, rd, map_reg)
+}
+
+fn emitMapDelete(e: BytecodeEmitter, map_reg: i64, key_reg: i64) {
+    emitRegReg(e, OP_MAP_DELETE, map_reg, key_reg)
+}
+
+fn emitDebugLine(e: BytecodeEmitter, line: i64) {
+    emitOpcode(e, OP_DEBUG_LINE)
+    emitByte(e, 0)
+    emitU16(e, line)
+}
+
+fn emitHalt(e: BytecodeEmitter) {
+    emitOpcode(e, OP_HALT)
+}
+
+fn emitNop(e: BytecodeEmitter) {
+    emitOpcode(e, OP_NOP)
+}
+
+// =============================================================================
+// Variable Management
+// =============================================================================
+
+fn emitAllocLocal(e: BytecodeEmitter, name: string) i64 {
+    const slot = e.local_count
+    e.local_count = e.local_count + 1
+    const loc = VarLocation{
+        .slot = slot,
+        .is_global = false,
+    }
+    e.locals.set(name, loc)
+    return slot
+}
+
+fn emitAllocGlobal(e: BytecodeEmitter, name: string) i64 {
+    const slot = e.global_count
+    e.global_count = e.global_count + 1
+    const loc = VarLocation{
+        .slot = slot,
+        .is_global = true,
+    }
+    e.globals.set(name, loc)
+    return slot
+}
+
+fn emitLookupVar(e: BytecodeEmitter, name: string) VarLocation {
+    if (e.locals.has(name)) {
+        return e.locals.get(name)
+    }
+    if (e.globals.has(name)) {
+        return e.globals.get(name)
+    }
+    return VarLocation{
+        .slot = -1,
+        .is_global = false,
+    }
+}
+
+// =============================================================================
+// Block/Jump Management
+// =============================================================================
+
+fn emitRecordBlockOffset(e: BytecodeEmitter, block_id: i64) {
+    e.block_offsets.set(block_id, e.code.len())
+}
+
+fn emitGetBlockOffset(e: BytecodeEmitter, block_id: i64) i64 {
+    if (e.block_offsets.has(block_id)) {
+        return e.block_offsets.get(block_id)
+    }
+    return -1
+}
+
+fn emitAddPendingJump(e: BytecodeEmitter, target_block: i64, is_wide: bool) {
+    const jump = PendingJump{
+        .patch_offset = e.code.len() - 2,
+        .target_block = target_block,
+        .is_wide = is_wide,
+    }
+    e.pending_jumps.push(jump)
+}
+
+fn emitPatchJumps(e: BytecodeEmitter) {
+    var i: i64 = 0
+    while (i < e.pending_jumps.len()) {
+        const jump = e.pending_jumps.get(i)
+        const target_offset = emitGetBlockOffset(e, jump.target_block)
+        if (target_offset >= 0) {
+            const patch_pos = jump.patch_offset
+            const rel_offset = target_offset - (patch_pos + 2)
+            e.code.set(patch_pos, rel_offset & 255)
+            e.code.set(patch_pos + 1, (rel_offset >> 8) & 255)
+        }
+        i = i + 1
+    }
+}
+
+// =============================================================================
+// Current Code Position
+// =============================================================================
+
+fn emitCodeLen(e: BytecodeEmitter) i64 {
+    return e.code.len()
+}
+
+// =============================================================================
+// Module Serialization
+// =============================================================================
+
+// Section type constants (matches Zig module.zig)
+const SECTION_CONSTANTS: i64 = 1
+const SECTION_TYPES: i64 = 2
+const SECTION_ROUTINES: i64 = 3
+const SECTION_CODE: i64 = 4
+const SECTION_EXPORTS: i64 = 5
+const SECTION_IMPORTS: i64 = 6
+const SECTION_DEBUG: i64 = 7
+
+// Constant tag values (matches Zig module.zig)
+const CONST_TAG_INTEGER: i64 = 1
+const CONST_TAG_DECIMAL: i64 = 2
+const CONST_TAG_STRING: i64 = 3
+const CONST_TAG_FIXED_STRING: i64 = 4
+const CONST_TAG_IDENTIFIER: i64 = 5
+const CONST_TAG_RECORD_REF: i64 = 6
+const CONST_TAG_ROUTINE_REF: i64 = 7
+const CONST_TAG_FLOAT: i64 = 8
+const CONST_TAG_BOOLEAN: i64 = 9
+
+struct ModuleBuilder {
+    header: List<i64>,
+    section_table: List<i64>,
+    constants_section: List<i64>,
+    types_section: List<i64>,
+    routines_section: List<i64>,
+    code_section: List<i64>,
+    exports_section: List<i64>,
+    section_count: i64,
+}
+
+fn newModuleBuilder() ModuleBuilder {
+    return ModuleBuilder{
+        .header = List.new(),
+        .section_table = List.new(),
+        .constants_section = List.new(),
+        .types_section = List.new(),
+        .routines_section = List.new(),
+        .code_section = List.new(),
+        .exports_section = List.new(),
+        .section_count = 0,
+    }
+}
+
+fn mbWriteU8(list: List<i64>, val: i64) {
+    list.push(val & 255)
+}
+
+fn mbWriteU16(list: List<i64>, val: i64) {
+    list.push(val & 255)
+    list.push((val >> 8) & 255)
+}
+
+fn mbWriteU32(list: List<i64>, val: i64) {
+    list.push(val & 255)
+    list.push((val >> 8) & 255)
+    list.push((val >> 16) & 255)
+    list.push((val >> 24) & 255)
+}
+
+fn mbWriteI64(list: List<i64>, val: i64) {
+    mbWriteU32(list, val)
+    mbWriteU32(list, val >> 32)
+}
+
+fn mbWriteString(list: List<i64>, s: string) {
+    const slen = len(s)
+    mbWriteU32(list, slen)
+    var i: i64 = 0
+    while (i < slen) {
+        const ch = s[i..i+1]
+        const code = ascii(ch)
+        list.push(code)
+        i = i + 1
+    }
+}
+
+fn mbWriteHeader(mb: ModuleBuilder, entry_point: i64, source_hash: i64) {
+    // Magic: CBO1
+    mb.header.push(67)  // 'C'
+    mb.header.push(66)  // 'B'
+    mb.header.push(79)  // 'O'
+    mb.header.push(49)  // '1'
+
+    // Version major (u16)
+    mbWriteU16(mb.header, VERSION_MAJOR)
+    // Version minor (u16)
+    mbWriteU16(mb.header, VERSION_MINOR)
+
+    // Flags (u32) - has_debug_info=1 if we have debug
+    mbWriteU32(mb.header, 0)
+
+    // Section count (u32)
+    mbWriteU32(mb.header, mb.section_count)
+
+    // Entry point (u32)
+    mbWriteU32(mb.header, entry_point)
+
+    // Source hash (u32)
+    mbWriteU32(mb.header, source_hash)
+
+    // Reserved (8 bytes)
+    var i: i64 = 0
+    while (i < 8) {
+        mb.header.push(0)
+        i = i + 1
+    }
+}
+
+fn mbWriteSectionEntry(mb: ModuleBuilder, section_type: i64, offset: i64, size_val: i64, entry_count: i64) {
+    mbWriteU32(mb.section_table, section_type)
+    mbWriteU32(mb.section_table, offset)
+    mbWriteU32(mb.section_table, size_val)
+    mbWriteU32(mb.section_table, entry_count)
+}
+
+fn mbWriteConstant(list: List<i64>, entry: ConstantEntry) {
+    switch (entry.tag) {
+        ConstantTag.Integer => {
+            list.push(CONST_TAG_INTEGER)
+            mbWriteI64(list, entry.int_val)
+        }
+        ConstantTag.Decimal => {
+            list.push(CONST_TAG_DECIMAL)
+            mbWriteI64(list, entry.int_val)
+            list.push(entry.precision)
+        }
+        ConstantTag.String => {
+            list.push(CONST_TAG_STRING)
+            mbWriteString(list, entry.str_val)
+        }
+        ConstantTag.FixedString => {
+            list.push(CONST_TAG_FIXED_STRING)
+            mbWriteU16(list, len(entry.str_val))
+            mbWriteString(list, entry.str_val)
+        }
+        ConstantTag.Identifier => {
+            list.push(CONST_TAG_IDENTIFIER)
+            mbWriteString(list, entry.str_val)
+        }
+        ConstantTag.RecordRef => {
+            list.push(CONST_TAG_RECORD_REF)
+            mbWriteU16(list, entry.int_val)
+        }
+        ConstantTag.RoutineRef => {
+            list.push(CONST_TAG_ROUTINE_REF)
+            mbWriteU16(list, entry.int_val)
+        }
+        ConstantTag.Float => {
+            list.push(CONST_TAG_FLOAT)
+            // Float as bits - simplified, just write the f64 as i64 bits
+            mbWriteI64(list, entry.int_val)
+        }
+        ConstantTag.Boolean => {
+            list.push(CONST_TAG_BOOLEAN)
+            if (entry.bool_val) {
+                list.push(1)
+            } else {
+                list.push(0)
+            }
+        }
+    }
+}
+
+fn mbWriteRoutine(list: List<i64>, routine: RoutineDef) {
+    mbWriteU32(list, routine.name_index)
+    if (routine.is_public) {
+        list.push(1)
+    } else {
+        list.push(0)
+    }
+    if (routine.is_function) {
+        list.push(1)
+    } else {
+        list.push(0)
+    }
+    mbWriteU32(list, routine.code_offset)
+    mbWriteU32(list, routine.code_length)
+    mbWriteU32(list, routine.param_count)
+    mbWriteU32(list, routine.local_count)
+    mbWriteU32(list, routine.max_stack)
+}
+
+fn mbWriteExport(list: List<i64>, export_entry: ExportEntry) {
+    mbWriteU32(list, export_entry.name_index)
+    switch (export_entry.kind) {
+        ExportKind.Routine => { list.push(0) }
+        ExportKind.Record => { list.push(1) }
+        ExportKind.Global => { list.push(2) }
+    }
+    mbWriteU32(list, export_entry.index)
+}
+
+// =============================================================================
+// IR-to-Bytecode Translation
+// =============================================================================
+// These functions translate IR instructions to bytecode.
+// They use value_slots to map IR value IDs to registers/locals.
+
+// IROp enum values (must match ir.cot)
+const IR_ALLOCA: i64 = 0
+const IR_LOAD: i64 = 1
+const IR_STORE: i64 = 2
+const IR_FIELD_PTR: i64 = 3
+const IR_INDEX_PTR: i64 = 4
+const IR_IADD: i64 = 5
+const IR_ISUB: i64 = 6
+const IR_IMUL: i64 = 7
+const IR_SDIV: i64 = 8
+const IR_UDIV: i64 = 9
+const IR_SREM: i64 = 10
+const IR_UREM: i64 = 11
+const IR_INEG: i64 = 12
+const IR_FADD: i64 = 13
+const IR_FSUB: i64 = 14
+const IR_FMUL: i64 = 15
+const IR_FDIV: i64 = 16
+const IR_FNEG: i64 = 17
+const IR_BAND: i64 = 18
+const IR_BOR: i64 = 19
+const IR_BXOR: i64 = 20
+const IR_BNOT: i64 = 21
+const IR_ISHL: i64 = 22
+const IR_SSHR: i64 = 23
+const IR_USHR: i64 = 24
+const IR_ICMP: i64 = 25
+const IR_FCMP: i64 = 26
+const IR_LOG_AND: i64 = 27
+const IR_LOG_OR: i64 = 28
+const IR_LOG_NOT: i64 = 29
+const IR_JUMP: i64 = 30
+const IR_BRIF: i64 = 31
+const IR_BRTABLE: i64 = 32
+const IR_RET: i64 = 33
+const IR_CALL: i64 = 34
+const IR_ICONST: i64 = 35
+const IR_FCONST: i64 = 36
+const IR_STRCONST: i64 = 37
+const IR_BOOLCONST: i64 = 38
+const IR_NULLCONST: i64 = 39
+const IR_BITCAST: i64 = 40
+const IR_SEXTEND: i64 = 41
+const IR_UEXTEND: i64 = 42
+const IR_IREDUCE: i64 = 43
+const IR_INT_TO_FLOAT: i64 = 44
+const IR_FLOAT_TO_INT: i64 = 45
+const IR_STR_CONCAT: i64 = 46
+const IR_STR_COMPARE: i64 = 47
+const IR_STR_LEN: i64 = 48
+const IR_WRAP_OPTIONAL: i64 = 49
+const IR_UNWRAP_OPTIONAL: i64 = 50
+const IR_IS_NULL: i64 = 51
+const IR_ARRAY_LOAD: i64 = 52
+const IR_ARRAY_STORE: i64 = 53
+const IR_ARRAY_LEN: i64 = 54
+const IR_LIST_NEW: i64 = 55
+const IR_LIST_PUSH: i64 = 56
+const IR_LIST_POP: i64 = 57
+const IR_LIST_GET: i64 = 58
+const IR_LIST_SET: i64 = 59
+const IR_LIST_LEN: i64 = 60
+const IR_MAP_NEW: i64 = 61
+const IR_MAP_SET: i64 = 62
+const IR_MAP_GET: i64 = 63
+const IR_MAP_HAS: i64 = 64
+const IR_MAP_DELETE: i64 = 65
+const IR_MAP_LEN: i64 = 66
+const IR_SELECT: i64 = 67
+const IR_DEBUG_LINE: i64 = 68
+
+// Comparison condition codes (must match ir.cot)
+const COND_EQ: i64 = 0
+const COND_NE: i64 = 1
+const COND_SLT: i64 = 2
+const COND_SLE: i64 = 3
+const COND_SGT: i64 = 4
+const COND_SGE: i64 = 5
+const COND_ULT: i64 = 6
+const COND_ULE: i64 = 7
+const COND_UGT: i64 = 8
+const COND_UGE: i64 = 9
+
+// Translation context for a single function
+struct TranslateContext {
+    emitter: BytecodeEmitter,
+    value_regs: Map<i64, i64>,
+    block_labels: Map<i64, i64>,
+    local_slots: Map<string, i64>,
+    next_local: i64,
+}
+
+fn newTranslateContext(e: BytecodeEmitter) TranslateContext {
+    return TranslateContext{
+        .emitter = e,
+        .value_regs = Map.new(),
+        .block_labels = Map.new(),
+        .local_slots = Map.new(),
+        .next_local = 0,
+    }
+}
+
+fn tcAllocReg(ctx: TranslateContext, value_id: i64) i64 {
+    const reg = regAllocAllocate(ctx.emitter.reg_alloc, value_id)
+    if (reg >= 0) {
+        ctx.value_regs.set(value_id, reg)
+    }
+    return reg
+}
+
+fn tcGetReg(ctx: TranslateContext, value_id: i64) i64 {
+    if (ctx.value_regs.has(value_id)) {
+        return ctx.value_regs.get(value_id)
+    }
+    return -1
+}
+
+fn tcFreeReg(ctx: TranslateContext, value_id: i64) {
+    if (ctx.value_regs.has(value_id)) {
+        const reg = ctx.value_regs.get(value_id)
+        regAllocFree(ctx.emitter.reg_alloc, reg)
+        ctx.value_regs.delete(value_id)
+    }
+}
+
+fn tcAllocLocal(ctx: TranslateContext, name: string) i64 {
+    const slot = ctx.next_local
+    ctx.next_local = ctx.next_local + 1
+    ctx.local_slots.set(name, slot)
+    return slot
+}
+
+fn tcGetLocal(ctx: TranslateContext, name: string) i64 {
+    if (ctx.local_slots.has(name)) {
+        return ctx.local_slots.get(name)
+    }
+    return -1
+}
+
+// Translate a single IR instruction to bytecode
+fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op2_id: i64, op3_id: i64, int_val: i64, str_val: string, bool_val: bool, cond: i64, target_block: i64, else_block: i64, callee: string, field_idx: i64, line: i64) {
+    const e = ctx.emitter
+
+    switch (op) {
+        IR_ICONST => {
+            const rd = tcAllocReg(ctx, result_id)
+            if (int_val >= -128 and int_val <= 127) {
+                emitMovI(e, rd, int_val)
+            } else {
+                const idx = emitAddInt(e, int_val)
+                emitLoadConst(e, rd, idx)
+            }
+        }
+
+        IR_FCONST => {
+            const rd = tcAllocReg(ctx, result_id)
+            const idx = emitAddFloat(e, 0.0)  // Note: float_val would need to be passed separately
+            emitLoadConst(e, rd, idx)
+        }
+
+        IR_STRCONST => {
+            const rd = tcAllocReg(ctx, result_id)
+            const idx = emitAddString(e, str_val)
+            emitLoadConst(e, rd, idx)
+        }
+
+        IR_BOOLCONST => {
+            const rd = tcAllocReg(ctx, result_id)
+            if (bool_val) {
+                emitLoadTrue(e, rd)
+            } else {
+                emitLoadFalse(e, rd)
+            }
+        }
+
+        IR_NULLCONST => {
+            const rd = tcAllocReg(ctx, result_id)
+            emitLoadNull(e, rd)
+        }
+
+        IR_IADD => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitAdd(e, rd, rs1, rs2)
+        }
+
+        IR_ISUB => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitSub(e, rd, rs1, rs2)
+        }
+
+        IR_IMUL => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitMul(e, rd, rs1, rs2)
+        }
+
+        IR_SDIV => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitDiv(e, rd, rs1, rs2)
+        }
+
+        IR_SREM => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitMod(e, rd, rs1, rs2)
+        }
+
+        IR_INEG => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitNeg(e, rd, rs)
+        }
+
+        IR_BAND => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitBitAnd(e, rd, rs1, rs2)
+        }
+
+        IR_BOR => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitBitOr(e, rd, rs1, rs2)
+        }
+
+        IR_BXOR => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitBitXor(e, rd, rs1, rs2)
+        }
+
+        IR_BNOT => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitBitNot(e, rd, rs)
+        }
+
+        IR_ISHL => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitShl(e, rd, rs1, rs2)
+        }
+
+        IR_SSHR => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitShr(e, rd, rs1, rs2)
+        }
+
+        IR_ICMP => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            switch (cond) {
+                COND_EQ => { emitCmpEq(e, rd, rs1, rs2) }
+                COND_NE => { emitCmpNe(e, rd, rs1, rs2) }
+                COND_SLT => { emitCmpLt(e, rd, rs1, rs2) }
+                COND_SLE => { emitCmpLe(e, rd, rs1, rs2) }
+                COND_SGT => { emitCmpGt(e, rd, rs1, rs2) }
+                COND_SGE => { emitCmpGe(e, rd, rs1, rs2) }
+                else => { emitCmpEq(e, rd, rs1, rs2) }
+            }
+        }
+
+        IR_LOG_AND => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitLogAnd(e, rd, rs1, rs2)
+        }
+
+        IR_LOG_OR => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitLogOr(e, rd, rs1, rs2)
+        }
+
+        IR_LOG_NOT => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitLogNot(e, rd, rs)
+        }
+
+        IR_LOAD => {
+            const rd = tcAllocReg(ctx, result_id)
+            const slot = tcGetLocal(ctx, str_val)
+            if (slot >= 0) {
+                emitLoadLocal(e, rd, slot)
+            }
+        }
+
+        IR_STORE => {
+            const rs = tcGetReg(ctx, op1_id)
+            const slot = tcGetLocal(ctx, str_val)
+            if (slot >= 0) {
+                emitStoreLocal(e, rs, slot)
+            }
+        }
+
+        IR_ALLOCA => {
+            tcAllocLocal(ctx, str_val)
+        }
+
+        IR_STR_CONCAT => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitStrConcat(e, rd, rs1, rs2)
+        }
+
+        IR_STR_LEN => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitStrLen(e, rd, rs)
+        }
+
+        IR_LIST_NEW => {
+            const rd = tcAllocReg(ctx, result_id)
+            emitListNew(e, rd)
+        }
+
+        IR_LIST_PUSH => {
+            const list_reg = tcGetReg(ctx, op1_id)
+            const val_reg = tcGetReg(ctx, op2_id)
+            emitListPush(e, list_reg, val_reg)
+        }
+
+        IR_LIST_POP => {
+            const rd = tcAllocReg(ctx, result_id)
+            const list_reg = tcGetReg(ctx, op1_id)
+            emitListPop(e, rd, list_reg)
+        }
+
+        IR_LIST_GET => {
+            const rd = tcAllocReg(ctx, result_id)
+            const list_reg = tcGetReg(ctx, op1_id)
+            const idx_reg = tcGetReg(ctx, op2_id)
+            emitListGet(e, rd, list_reg, idx_reg)
+        }
+
+        IR_LIST_SET => {
+            const list_reg = tcGetReg(ctx, op1_id)
+            const idx_reg = tcGetReg(ctx, op2_id)
+            const val_reg = tcGetReg(ctx, op3_id)
+            emitListSet(e, list_reg, idx_reg, val_reg)
+        }
+
+        IR_LIST_LEN => {
+            const rd = tcAllocReg(ctx, result_id)
+            const list_reg = tcGetReg(ctx, op1_id)
+            emitListLen(e, rd, list_reg)
+        }
+
+        IR_MAP_NEW => {
+            const rd = tcAllocReg(ctx, result_id)
+            emitMapNew(e, rd, 0)
+        }
+
+        IR_MAP_SET => {
+            const map_reg = tcGetReg(ctx, op1_id)
+            const key_reg = tcGetReg(ctx, op2_id)
+            const val_reg = tcGetReg(ctx, op3_id)
+            emitMapSet(e, map_reg, key_reg, val_reg)
+        }
+
+        IR_MAP_GET => {
+            const rd = tcAllocReg(ctx, result_id)
+            const map_reg = tcGetReg(ctx, op1_id)
+            const key_reg = tcGetReg(ctx, op2_id)
+            emitMapGet(e, rd, map_reg, key_reg)
+        }
+
+        IR_MAP_HAS => {
+            const rd = tcAllocReg(ctx, result_id)
+            const map_reg = tcGetReg(ctx, op1_id)
+            const key_reg = tcGetReg(ctx, op2_id)
+            emitMapHas(e, rd, map_reg, key_reg)
+        }
+
+        IR_MAP_DELETE => {
+            const map_reg = tcGetReg(ctx, op1_id)
+            const key_reg = tcGetReg(ctx, op2_id)
+            emitMapDelete(e, map_reg, key_reg)
+        }
+
+        IR_MAP_LEN => {
+            const rd = tcAllocReg(ctx, result_id)
+            const map_reg = tcGetReg(ctx, op1_id)
+            emitMapLen(e, rd, map_reg)
+        }
+
+        IR_JUMP => {
+            emitJmp(e, 0)
+            emitAddPendingJump(e, target_block, false)
+        }
+
+        IR_BRIF => {
+            const cond_reg = tcGetReg(ctx, op1_id)
+            emitJnz(e, cond_reg, 0)
+            emitAddPendingJump(e, target_block, false)
+            emitJmp(e, 0)
+            emitAddPendingJump(e, else_block, false)
+        }
+
+        IR_RET => {
+            if (op1_id >= 0) {
+                const rs = tcGetReg(ctx, op1_id)
+                emitRetVal(e, rs)
+            } else {
+                emitRet(e)
+            }
+        }
+
+        IR_CALL => {
+            // Get function index from function_indices map
+            if (e.function_indices.has(callee)) {
+                const fn_idx = e.function_indices.get(callee)
+                const argc = int_val
+                emitCall(e, fn_idx, argc)
+                if (result_id >= 0) {
+                    const rd = tcAllocReg(ctx, result_id)
+                    emitMov(e, rd, 15)  // Move return value from r15
+                }
+            }
+        }
+
+        IR_DEBUG_LINE => {
+            emitDebugLine(e, line)
+        }
+
+        else => {
+            // Unknown instruction, emit NOP
+            emitNop(e)
+        }
+    }
+}
+
+// Translate a basic block
+fn translateBlock(ctx: TranslateContext, block_id: i64, insts: List<i64>) {
+    emitRecordBlockOffset(ctx.emitter, block_id)
+    var i: i64 = 0
+    while (i < insts.len()) {
+        // Each instruction is encoded as a series of values
+        // This is a simplified representation
+        i = i + 1
+    }
+}
+
+// Register a function for calling
+fn emitRegisterFunction(e: BytecodeEmitter, name: string, idx: i64) {
+    e.function_indices.set(name, idx)
+}
+
+// Create a routine entry in the bytecode
+fn emitBeginRoutine(e: BytecodeEmitter, name: string, is_public: bool, is_function: bool, param_count: i64) i64 {
+    const name_idx = emitAddIdentifier(e, name)
+    var routine = newRoutineDef(name_idx)
+    routine.is_public = is_public
+    routine.is_function = is_function
+    routine.param_count = param_count
+    routine.code_offset = e.code.len()
+    const idx = e.routines.len()
+    e.routines.push(routine)
+    e.function_indices.set(name, idx)
+    regAllocReset(e.reg_alloc)
+    e.local_count = 0
+    e.current_routine_start = e.code.len()
+    return idx
+}
+
+fn emitEndRoutine(e: BytecodeEmitter, routine_idx: i64, local_count: i64, max_stack: i64) {
+    var routine = e.routines.get(routine_idx)
+    routine.code_length = e.code.len() - routine.code_offset
+    routine.local_count = local_count
+    routine.max_stack = max_stack
+    e.routines.set(routine_idx, routine)
+    emitPatchJumps(e)
+}
+
+// Add an export for a routine
+fn emitAddExport(e: BytecodeEmitter, name: string, kind: ExportKind, idx: i64) {
+    const name_idx = emitAddIdentifier(e, name)
+    const entry = ExportEntry{
+        .name_index = name_idx,
+        .kind = kind,
+        .index = idx,
+    }
+    e.exports.push(entry)
+}
+
+// =============================================================================
+// Module Building
+// =============================================================================
+
+fn emitBuildModule(e: BytecodeEmitter, entry_point: i64, source_hash: i64) List<i64> {
+    const mb = newModuleBuilder()
+
+    // Count sections that have content
+    var section_count: i64 = 0
+    if (e.constants.len() > 0) { section_count = section_count + 1 }
+    if (e.routines.len() > 0) { section_count = section_count + 1 }
+    if (e.code.len() > 0) { section_count = section_count + 1 }
+    if (e.exports.len() > 0) { section_count = section_count + 1 }
+    mb.section_count = section_count
+
+    // Write constants section
+    var i: i64 = 0
+    while (i < e.constants.len()) {
+        const c = e.constants.get(i)
+        mbWriteConstant(mb.constants_section, c)
+        i = i + 1
+    }
+
+    // Write routines section
+    i = 0
+    while (i < e.routines.len()) {
+        const r = e.routines.get(i)
+        mbWriteRoutine(mb.routines_section, r)
+        i = i + 1
+    }
+
+    // Write exports section
+    i = 0
+    while (i < e.exports.len()) {
+        const exp = e.exports.get(i)
+        mbWriteExport(mb.exports_section, exp)
+        i = i + 1
+    }
+
+    // Copy code section
+    i = 0
+    while (i < e.code.len()) {
+        mb.code_section.push(e.code.get(i))
+        i = i + 1
+    }
+
+    // Calculate offsets
+    // Header is 32 bytes
+    // Section table is 16 bytes per section
+    const header_size: i64 = 32
+    const section_table_size: i64 = section_count * 16
+    var offset: i64 = header_size + section_table_size
+
+    // Write section table entries
+    if (e.constants.len() > 0) {
+        mbWriteSectionEntry(mb, SECTION_CONSTANTS, offset, mb.constants_section.len(), e.constants.len())
+        offset = offset + mb.constants_section.len()
+    }
+    if (e.routines.len() > 0) {
+        mbWriteSectionEntry(mb, SECTION_ROUTINES, offset, mb.routines_section.len(), e.routines.len())
+        offset = offset + mb.routines_section.len()
+    }
+    if (e.code.len() > 0) {
+        mbWriteSectionEntry(mb, SECTION_CODE, offset, mb.code_section.len(), 0)
+        offset = offset + mb.code_section.len()
+    }
+    if (e.exports.len() > 0) {
+        mbWriteSectionEntry(mb, SECTION_EXPORTS, offset, mb.exports_section.len(), e.exports.len())
+        offset = offset + mb.exports_section.len()
+    }
+
+    // Write header
+    mbWriteHeader(mb, entry_point, source_hash)
+
+    // Assemble final module
+    const result: List<i64> = List.new()
+
+    // Copy header
+    i = 0
+    while (i < mb.header.len()) {
+        result.push(mb.header.get(i))
+        i = i + 1
+    }
+
+    // Copy section table
+    i = 0
+    while (i < mb.section_table.len()) {
+        result.push(mb.section_table.get(i))
+        i = i + 1
+    }
+
+    // Copy sections in order
+    i = 0
+    while (i < mb.constants_section.len()) {
+        result.push(mb.constants_section.get(i))
+        i = i + 1
+    }
+    i = 0
+    while (i < mb.routines_section.len()) {
+        result.push(mb.routines_section.get(i))
+        i = i + 1
+    }
+    i = 0
+    while (i < mb.code_section.len()) {
+        result.push(mb.code_section.get(i))
+        i = i + 1
+    }
+    i = 0
+    while (i < mb.exports_section.len()) {
+        result.push(mb.exports_section.get(i))
+        i = i + 1
+    }
+
+    return result
+}

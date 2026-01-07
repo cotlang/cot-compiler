@@ -1,0 +1,38 @@
+// Simple string comparison test
+fn main() i64 {
+    // Test basic string comparisons
+    const a = "a"
+    const z = "z"
+
+    println("Testing string comparisons:")
+    println("a = " + a)
+
+    if (a >= "a") {
+        println("a >= 'a': true")
+    } else {
+        println("a >= 'a': false")
+    }
+
+    if (a <= "z") {
+        println("a <= 'z': true")
+    } else {
+        println("a <= 'z': false")
+    }
+
+    // Test isAlpha-like logic
+    const ch = "c"
+    if ((ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z")) {
+        println("'c' is alpha: true")
+    } else {
+        println("'c' is alpha: false")
+    }
+
+    // Test substring
+    const source = "const"
+    const first = source[0..1]
+    const second = source[1..2]
+    println("First char of 'const': " + first)
+    println("Second char of 'const': " + second)
+
+    return 0
+}

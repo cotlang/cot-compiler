@@ -1,0 +1,112 @@
+// Test the SoA NodeStore implementation (global singleton pattern)
+
+import "../src/node_store"
+
+// Kind constants (must match node_store.cot values)
+const EK_INT_LIT: i64 = 0
+const EK_IDENT: i64 = 6
+const SK_EXPR_STMT: i64 = 0
+const SK_RETURN: i64 = 3
+const TK_NAMED: i64 = 0
+
+fn main() {
+    println("=== NodeStore Test ===")
+
+    // Initialize the global node store
+    nsInit()
+    println("DEBUG: nsInit() completed")
+
+    // Test string storage
+    println("DEBUG: About to call nsAddString")
+    var str_idx: i64 = nsAddString("hello")
+    println("DEBUG: nsAddString returned: " + string(str_idx))
+
+    println("DEBUG: About to call nsGetString")
+    var retrieved: string = nsGetString(str_idx)
+    println("DEBUG: nsGetString returned: " + retrieved)
+
+    if (retrieved == "hello") {
+        println("PASS: String storage")
+    } else {
+        println("FAIL: String storage - got: " + retrieved)
+    }
+
+    // Test expression creation
+    println("DEBUG: About to call nsAddIntLit")
+    var int_lit: i64 = nsAddIntLit(1, 42)
+    println("DEBUG: nsAddIntLit returned: " + string(int_lit))
+    if (nsExprKind(int_lit) == EK_INT_LIT) {
+        println("PASS: Int literal kind")
+    } else {
+        println("FAIL: Int literal kind")
+    }
+    if (nsExprData1(int_lit) == 42) {
+        println("PASS: Int literal value")
+    } else {
+        println("FAIL: Int literal value")
+    }
+
+    // Test identifier
+    var ident: i64 = nsAddIdent(2, "myVar")
+    if (nsExprKind(ident) == EK_IDENT) {
+        println("PASS: Identifier kind")
+    } else {
+        println("FAIL: Identifier kind")
+    }
+    var name_idx: i64 = nsExprData1(ident)
+    if (nsGetString(name_idx) == "myVar") {
+        println("PASS: Identifier name")
+    } else {
+        println("FAIL: Identifier name")
+    }
+
+    // Test binary expression
+    var left: i64 = nsAddIntLit(3, 10)
+    var right: i64 = nsAddIntLit(3, 20)
+    var binary: i64 = nsAddBinary(3, left, 1, right)  // op=1 for plus
+    if (nsBinaryLeft(binary) == left) {
+        println("PASS: Binary left")
+    } else {
+        println("FAIL: Binary left")
+    }
+    if (nsBinaryRight(binary) == right) {
+        println("PASS: Binary right")
+    } else {
+        println("FAIL: Binary right")
+    }
+    if (nsBinaryOp(binary) == 1) {
+        println("PASS: Binary op")
+    } else {
+        println("FAIL: Binary op")
+    }
+
+    // Test statement
+    var expr_stmt: i64 = nsAddExprStmt(4, binary)
+    if (nsStmtKind(expr_stmt) == SK_EXPR_STMT) {
+        println("PASS: Expr stmt kind")
+    } else {
+        println("FAIL: Expr stmt kind")
+    }
+
+    // Test return statement
+    var ret: i64 = nsAddReturn(5, int_lit)
+    if (nsStmtKind(ret) == SK_RETURN) {
+        println("PASS: Return stmt kind")
+    } else {
+        println("FAIL: Return stmt kind")
+    }
+
+    // Test type
+    var i64_type: i64 = nsAddNamedType("i64")
+    if (nsTypeKind(i64_type) == TK_NAMED) {
+        println("PASS: Named type kind")
+    } else {
+        println("FAIL: Named type kind")
+    }
+
+    // Test counts
+    println("Expression count: " + string(nsExprCount()))
+    println("Statement count: " + string(nsStmtCount()))
+
+    println("=== All Tests Complete ===")
+}

@@ -1,0 +1,39 @@
+// Cot Self-Hosted Compiler Driver
+//
+// This driver demonstrates the compilation pipeline using imports.
+
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+fn main() i64 {
+    println("=== Cot Self-Hosted Compiler Driver ===")
+    println("")
+
+    // Test source code
+    const source = "fn add(a: i64, b: i64) i64 { return a + b }"
+
+    println("Source code:")
+    println(source)
+    println("")
+
+    // Phase 1: Parse
+    println("=== Phase 1: Parsing ===")
+    var parser = newParser(source)
+    println("Parser created")
+
+    var mod = parserParseModule(&parser)
+    println("Module parsed")
+
+    if (mod.has_errors) {
+        println("Parse errors occurred!")
+        return 1
+    }
+
+    println("Statements parsed: " + string(mod.statements.len()))
+    println("Parser test passed!")
+    println("")
+
+    return 0
+}

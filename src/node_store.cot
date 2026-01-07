@@ -1,0 +1,481 @@
+// Node Store - SoA (Structure of Arrays) Pattern
+//
+// Stores AST nodes using parallel arrays of primitives, matching
+// the Zig compiler's node_store.zig architecture.
+//
+// Uses a global singleton pattern to avoid passing the large struct
+// as a parameter (which would exceed the 16-register limit).
+//
+// Each node type has:
+//   - kinds: List<i64>   - The node kind/tag (enum as i64)
+//   - locs:  List<i64>   - Source line number
+//   - data1: List<i64>   - First data field (varies by kind)
+//   - data2: List<i64>   - Second data field (varies by kind)
+//
+// Variable-length data (params, fields, etc.) stored in extra_data.
+
+import "token"
+
+// =============================================================================
+// Index Constants
+// =============================================================================
+
+const NULL_IDX: i64 = -1
+
+fn isNull(idx: i64) bool {
+    return idx == NULL_IDX
+}
+
+// =============================================================================
+// Statement Kinds (stored as i64 in stmt_kinds)
+// =============================================================================
+
+pub const SK_EXPR_STMT: i64 = 0
+pub const SK_VAR_DECL: i64 = 1
+pub const SK_CONST_DECL: i64 = 2
+pub const SK_RETURN: i64 = 3
+pub const SK_IF: i64 = 4
+pub const SK_WHILE: i64 = 5
+pub const SK_FOR: i64 = 6
+pub const SK_LOOP: i64 = 7
+pub const SK_BLOCK: i64 = 8
+pub const SK_FN_DECL: i64 = 9
+pub const SK_STRUCT_DECL: i64 = 10
+pub const SK_UNION_DECL: i64 = 11
+pub const SK_ENUM_DECL: i64 = 12
+pub const SK_IMPL_DECL: i64 = 13
+pub const SK_IMPORT: i64 = 14
+pub const SK_BREAK: i64 = 15
+pub const SK_CONTINUE: i64 = 16
+pub const SK_SWITCH: i64 = 17
+pub const SK_TRAIT_DECL: i64 = 18
+pub const SK_TYPE_ALIAS: i64 = 19
+pub const SK_DEFER: i64 = 20
+pub const SK_TRY: i64 = 21
+
+// =============================================================================
+// Expression Kinds (stored as i64 in expr_kinds)
+// =============================================================================
+
+pub const EK_INT_LIT: i64 = 0
+pub const EK_FLOAT_LIT: i64 = 1
+pub const EK_STR_LIT: i64 = 2
+pub const EK_CHAR_LIT: i64 = 3
+pub const EK_BOOL_LIT: i64 = 4
+pub const EK_NULL_LIT: i64 = 5
+pub const EK_IDENT: i64 = 6
+pub const EK_BINARY: i64 = 7
+pub const EK_UNARY: i64 = 8
+pub const EK_CALL: i64 = 9
+pub const EK_FIELD: i64 = 10
+pub const EK_INDEX: i64 = 11
+pub const EK_SLICE: i64 = 12
+pub const EK_DEREF: i64 = 13
+pub const EK_REF: i64 = 14
+pub const EK_CAST: i64 = 15
+pub const EK_STRUCT_INIT: i64 = 16
+pub const EK_ARRAY_INIT: i64 = 17
+pub const EK_IF_EXPR: i64 = 18
+pub const EK_LAMBDA: i64 = 19
+pub const EK_MATCH: i64 = 20
+pub const EK_RANGE: i64 = 21
+pub const EK_PAREN: i64 = 22
+pub const EK_METHOD_CALL: i64 = 23
+pub const EK_OPTIONAL_UNWRAP: i64 = 24
+pub const EK_TRY_EXPR: i64 = 25
+pub const EK_ERROR_LITERAL: i64 = 26
+
+// =============================================================================
+// Type Kinds (stored as i64 in type_kinds)
+// =============================================================================
+
+pub const TK_NAMED: i64 = 0      // Built-in or user type name
+pub const TK_POINTER: i64 = 1    // *T or *const T
+pub const TK_OPTIONAL: i64 = 2   // ?T
+pub const TK_ARRAY: i64 = 3      // [N]T
+pub const TK_SLICE: i64 = 4      // []T
+pub const TK_FUNCTION: i64 = 5   // fn(...) -> T
+pub const TK_GENERIC: i64 = 6    // T<args>
+pub const TK_TUPLE: i64 = 7      // (T1, T2, ...)
+pub const TK_UNION: i64 = 8      // T | U
+pub const TK_RESULT: i64 = 9     // T!E
+
+// =============================================================================
+// Global NodeStore Singleton
+// =============================================================================
+
+// The global node store - initialized by nsInit()
+var g_stmt_kinds: List<i64> = List.new()
+var g_stmt_lines: List<i64> = List.new()
+var g_stmt_data1: List<i64> = List.new()
+var g_stmt_data2: List<i64> = List.new()
+var g_expr_kinds: List<i64> = List.new()
+var g_expr_lines: List<i64> = List.new()
+var g_expr_data1: List<i64> = List.new()
+var g_expr_data2: List<i64> = List.new()
+var g_type_kinds: List<i64> = List.new()
+var g_type_data1: List<i64> = List.new()
+var g_type_data2: List<i64> = List.new()
+var g_strings: List<string> = List.new()
+var g_extra: List<i64> = List.new()
+
+// Reset/reinitialize the global store (for testing or reuse)
+fn nsInit() {
+    g_stmt_kinds = List.new()
+    g_stmt_lines = List.new()
+    g_stmt_data1 = List.new()
+    g_stmt_data2 = List.new()
+    g_expr_kinds = List.new()
+    g_expr_lines = List.new()
+    g_expr_data1 = List.new()
+    g_expr_data2 = List.new()
+    g_type_kinds = List.new()
+    g_type_data1 = List.new()
+    g_type_data2 = List.new()
+    g_strings = List.new()
+    g_extra = List.new()
+}
+
+// =============================================================================
+// String Interning
+// =============================================================================
+
+fn nsAddString(s: string) i64 {
+    // Simple implementation: just add to list and return index
+    // TODO: Could deduplicate strings for efficiency
+    var idx: i64 = g_strings.len()
+    g_strings.push(s)
+    return idx
+}
+
+fn nsGetString(idx: i64) string {
+    if (idx < 0 or idx >= g_strings.len()) {
+        return ""
+    }
+    return g_strings.get(idx)
+}
+
+// =============================================================================
+// Extra Data (for variable-length content)
+// =============================================================================
+
+fn nsAddExtra(value: i64) i64 {
+    var idx: i64 = g_extra.len()
+    g_extra.push(value)
+    return idx
+}
+
+fn nsGetExtra(idx: i64) i64 {
+    if (idx < 0 or idx >= g_extra.len()) {
+        return 0
+    }
+    return g_extra.get(idx)
+}
+
+// Add a span of values, returns start_idx
+fn nsAddExtraSpan(values: []i64) i64 {
+    var start: i64 = g_extra.len()
+    var i: i64 = 0
+    while (i < len(values)) {
+        g_extra.push(values[i])
+        i = i + 1
+    }
+    return start
+}
+
+// =============================================================================
+// Statement Operations
+// =============================================================================
+
+// Add a statement, returns statement index
+fn nsAddStmt(kind: i64, line: i64, data1: i64, data2: i64) i64 {
+    var idx: i64 = g_stmt_kinds.len()
+    g_stmt_kinds.push(kind)
+    g_stmt_lines.push(line)
+    g_stmt_data1.push(data1)
+    g_stmt_data2.push(data2)
+    return idx
+}
+
+fn nsStmtKind(idx: i64) i64 {
+    return g_stmt_kinds.get(idx)
+}
+
+fn nsStmtLine(idx: i64) i64 {
+    return g_stmt_lines.get(idx)
+}
+
+fn nsStmtData1(idx: i64) i64 {
+    return g_stmt_data1.get(idx)
+}
+
+fn nsStmtData2(idx: i64) i64 {
+    return g_stmt_data2.get(idx)
+}
+
+fn nsStmtCount() i64 {
+    return g_stmt_kinds.len()
+}
+
+// =============================================================================
+// Expression Operations
+// =============================================================================
+
+fn nsAddExpr(kind: i64, line: i64, data1: i64, data2: i64) i64 {
+    var idx: i64 = g_expr_kinds.len()
+    g_expr_kinds.push(kind)
+    g_expr_lines.push(line)
+    g_expr_data1.push(data1)
+    g_expr_data2.push(data2)
+    return idx
+}
+
+fn nsExprKind(idx: i64) i64 {
+    return g_expr_kinds.get(idx)
+}
+
+fn nsExprLine(idx: i64) i64 {
+    return g_expr_lines.get(idx)
+}
+
+fn nsExprData1(idx: i64) i64 {
+    return g_expr_data1.get(idx)
+}
+
+fn nsExprData2(idx: i64) i64 {
+    return g_expr_data2.get(idx)
+}
+
+fn nsExprCount() i64 {
+    return g_expr_kinds.len()
+}
+
+// =============================================================================
+// Type Operations
+// =============================================================================
+
+fn nsAddType(kind: i64, data1: i64, data2: i64) i64 {
+    var idx: i64 = g_type_kinds.len()
+    g_type_kinds.push(kind)
+    g_type_data1.push(data1)
+    g_type_data2.push(data2)
+    return idx
+}
+
+fn nsTypeKind(idx: i64) i64 {
+    return g_type_kinds.get(idx)
+}
+
+fn nsTypeData1(idx: i64) i64 {
+    return g_type_data1.get(idx)
+}
+
+fn nsTypeData2(idx: i64) i64 {
+    return g_type_data2.get(idx)
+}
+
+// =============================================================================
+// Convenience Builders - Expressions
+// =============================================================================
+
+// Integer literal: data1 = value
+fn nsAddIntLit(line: i64, value: i64) i64 {
+    return nsAddExpr(EK_INT_LIT, line, value, 0)
+}
+
+// String literal: data1 = string_idx
+fn nsAddStrLit(line: i64, value: string) i64 {
+    var str_idx: i64 = nsAddString(value)
+    return nsAddExpr(EK_STR_LIT, line, str_idx, 0)
+}
+
+// Bool literal: data1 = 0 or 1
+fn nsAddBoolLit(line: i64, value: bool) i64 {
+    var v: i64 = 0
+    if (value) {
+        v = 1
+    }
+    return nsAddExpr(EK_BOOL_LIT, line, v, 0)
+}
+
+// Null literal
+fn nsAddNullLit(line: i64) i64 {
+    return nsAddExpr(EK_NULL_LIT, line, 0, 0)
+}
+
+// Identifier: data1 = name_string_idx
+fn nsAddIdent(line: i64, name: string) i64 {
+    var name_idx: i64 = nsAddString(name)
+    return nsAddExpr(EK_IDENT, line, name_idx, 0)
+}
+
+// Binary expr: data1 = left_expr_idx, data2 = (right_idx << 8) | op
+fn nsAddBinary(line: i64, left: i64, op: i64, right: i64) i64 {
+    var data2: i64 = (right * 256) + op
+    return nsAddExpr(EK_BINARY, line, left, data2)
+}
+
+// Get binary parts
+fn nsBinaryLeft(expr_idx: i64) i64 {
+    return nsExprData1(expr_idx)
+}
+
+fn nsBinaryOp(expr_idx: i64) i64 {
+    return nsExprData2(expr_idx) % 256
+}
+
+fn nsBinaryRight(expr_idx: i64) i64 {
+    return nsExprData2(expr_idx) / 256
+}
+
+// Unary expr: data1 = operand_expr_idx, data2 = op
+fn nsAddUnary(line: i64, op: i64, operand: i64) i64 {
+    return nsAddExpr(EK_UNARY, line, operand, op)
+}
+
+// Field access: data1 = object_expr_idx, data2 = field_name_string_idx
+fn nsAddField(line: i64, object: i64, field_name: string) i64 {
+    var name_idx: i64 = nsAddString(field_name)
+    return nsAddExpr(EK_FIELD, line, object, name_idx)
+}
+
+// Call: data1 = callee_expr_idx, data2 = extra_idx (stores arg count + arg indices)
+fn nsAddCall(line: i64, callee: i64, arg_indices: []i64) i64 {
+    var extra_start: i64 = g_extra.len()
+    g_extra.push(len(arg_indices))
+    var i: i64 = 0
+    while (i < len(arg_indices)) {
+        g_extra.push(arg_indices[i])
+        i = i + 1
+    }
+    return nsAddExpr(EK_CALL, line, callee, extra_start)
+}
+
+// Get call arg count
+fn nsCallArgCount(expr_idx: i64) i64 {
+    var extra_idx: i64 = nsExprData2(expr_idx)
+    return nsGetExtra(extra_idx)
+}
+
+// Get call arg at position
+fn nsCallArg(expr_idx: i64, arg_pos: i64) i64 {
+    var extra_idx: i64 = nsExprData2(expr_idx)
+    return nsGetExtra(extra_idx + 1 + arg_pos)
+}
+
+// =============================================================================
+// Convenience Builders - Statements
+// =============================================================================
+
+// Expression statement: data1 = expr_idx
+fn nsAddExprStmt(line: i64, expr_idx: i64) i64 {
+    return nsAddStmt(SK_EXPR_STMT, line, expr_idx, 0)
+}
+
+// Var decl: data1 = name_string_idx, data2 = extra_idx (type_idx, init_idx, mutable)
+fn nsAddVarDecl(line: i64, name: string, type_idx: i64, init_idx: i64, mutable: bool) i64 {
+    var name_idx: i64 = nsAddString(name)
+    var extra_start: i64 = g_extra.len()
+    g_extra.push(type_idx)
+    g_extra.push(init_idx)
+    var m: i64 = 0
+    if (mutable) {
+        m = 1
+    }
+    g_extra.push(m)
+    return nsAddStmt(SK_VAR_DECL, line, name_idx, extra_start)
+}
+
+// Return: data1 = expr_idx (-1 if void return)
+fn nsAddReturn(line: i64, expr_idx: i64) i64 {
+    return nsAddStmt(SK_RETURN, line, expr_idx, 0)
+}
+
+// If: data1 = cond_expr_idx, data2 = extra_idx (then_stmt_idx, else_stmt_idx)
+fn nsAddIf(line: i64, cond: i64, then_body: i64, else_body: i64) i64 {
+    var extra_start: i64 = g_extra.len()
+    g_extra.push(then_body)
+    g_extra.push(else_body)
+    return nsAddStmt(SK_IF, line, cond, extra_start)
+}
+
+// While: data1 = cond_expr_idx, data2 = body_stmt_idx
+fn nsAddWhile(line: i64, cond: i64, body: i64) i64 {
+    return nsAddStmt(SK_WHILE, line, cond, body)
+}
+
+// Block: data1 = extra_idx (count + stmt indices)
+fn nsAddBlock(line: i64, stmt_indices: []i64) i64 {
+    var extra_start: i64 = g_extra.len()
+    g_extra.push(len(stmt_indices))
+    var i: i64 = 0
+    while (i < len(stmt_indices)) {
+        g_extra.push(stmt_indices[i])
+        i = i + 1
+    }
+    return nsAddStmt(SK_BLOCK, line, extra_start, 0)
+}
+
+// Get block statement count
+fn nsBlockCount(stmt_idx: i64) i64 {
+    var extra_idx: i64 = nsStmtData1(stmt_idx)
+    return nsGetExtra(extra_idx)
+}
+
+// Get block statement at position
+fn nsBlockStmt(stmt_idx: i64, pos: i64) i64 {
+    var extra_idx: i64 = nsStmtData1(stmt_idx)
+    return nsGetExtra(extra_idx + 1 + pos)
+}
+
+// Function decl: data1 = name_string_idx, data2 = extra_idx
+// Extra layout: [param_count, ret_type_idx, body_stmt_idx, ...param data...]
+fn nsAddFnDecl(line: i64, name: string, ret_type: i64, body: i64, param_names: []string, param_types: []i64) i64 {
+    var name_idx: i64 = nsAddString(name)
+    var extra_start: i64 = g_extra.len()
+    g_extra.push(len(param_names))
+    g_extra.push(ret_type)
+    g_extra.push(body)
+    var i: i64 = 0
+    while (i < len(param_names)) {
+        var pname_idx: i64 = nsAddString(param_names[i])
+        g_extra.push(pname_idx)
+        g_extra.push(param_types[i])
+        i = i + 1
+    }
+    return nsAddStmt(SK_FN_DECL, line, name_idx, extra_start)
+}
+
+// =============================================================================
+// Convenience Builders - Types
+// =============================================================================
+
+// Named type: data1 = name_string_idx
+fn nsAddNamedType(name: string) i64 {
+    var name_idx: i64 = nsAddString(name)
+    return nsAddType(TK_NAMED, name_idx, 0)
+}
+
+// Pointer type: data1 = inner_type_idx, data2 = is_const (0/1)
+fn nsAddPointerType(inner: i64, is_const: bool) i64 {
+    var c: i64 = 0
+    if (is_const) {
+        c = 1
+    }
+    return nsAddType(TK_POINTER, inner, c)
+}
+
+// Optional type: data1 = inner_type_idx
+fn nsAddOptionalType(inner: i64) i64 {
+    return nsAddType(TK_OPTIONAL, inner, 0)
+}
+
+// Array type: data1 = elem_type_idx, data2 = size
+fn nsAddArrayType(elem: i64, size: i64) i64 {
+    return nsAddType(TK_ARRAY, elem, size)
+}
+
+// Slice type: data1 = elem_type_idx
+fn nsAddSliceType(elem: i64) i64 {
+    return nsAddType(TK_SLICE, elem, 0)
+}

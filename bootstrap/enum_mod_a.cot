@@ -1,0 +1,12 @@
+// Module A defines enum and struct
+
+enum MyKind {
+    One,
+    Two,
+    Three,
+}
+
+struct MyData {
+    kind: MyKind,
+    value: i64,
+}

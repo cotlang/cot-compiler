@@ -1,0 +1,38 @@
+// Test calling parserIsAtEnd twice
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn wrapperDoubleCalls(p: *Parser) bool {
+    println("Creating local module...")
+    var mod = newModule()
+    println("Module created")
+
+    println("First parserIsAtEnd call...")
+    const first = parserIsAtEnd(p)
+    println("First result: " + string(first as i64))
+
+    println("Second parserIsAtEnd call...")
+    const second = parserIsAtEnd(p)
+    println("Second result: " + string(second as i64))
+
+    println("Calling parserPeek...")
+    const tok = parserPeek(p)
+    println("Token type: " + string(tok as i64))
+
+    return true
+}
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Calling wrapper...")
+    const result = wrapperDoubleCalls(&p)
+    println("Done!")
+    return 0
+}

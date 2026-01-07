@@ -1,0 +1,13 @@
+// Module B imports A and defines check function
+
+import "enum_mod_a"
+
+struct Container {
+    prefix: i64,
+    data: MyData,
+    suffix: i64,
+}
+
+fn checkKind(c: *Container, k: MyKind) bool {
+    return c.data.kind == k
+}

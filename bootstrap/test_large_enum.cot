@@ -1,0 +1,99 @@
+// Test switch with a large enum
+
+enum BigEnum {
+    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9,
+    V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
+    V20, V21, V22, V23, V24, V25, V26, V27, V28, V29,
+    V30, V31, V32, V33, V34, V35, V36, V37, V38, V39,
+    V40, V41, V42, V43, V44, V45, V46, V47, V48, V49,
+    V50, V51, V52, V53, V54, V55, V56, V57, V58, V59,
+    V60, V61, V62, V63, V64, V65, V66, V67, V68, V69,
+    V70, V71, V72, V73, V74, V75, V76, V77, V78, V79,
+    V80, V81, V82, V83, V84, V85, V86, V87, V88, V89,
+    V90, V91, V92, V93, V94, V95, V96, V97, V98, V99,
+    V100, V101, V102, V103, V104, V105,
+}
+
+struct Token {
+    kind: BigEnum,
+    text: string,
+}
+
+struct Lexer {
+    s1: string,
+    s2: i64,
+    s3: i64,
+    s4: i64,
+    s5: i64,
+    s6: i64,
+    s7: bool,
+    s8: i64,
+}
+
+struct Parser {
+    lexer: Lexer,
+    current: Token,
+    previous: Token,
+}
+
+fn checkKind(p: *Parser, expected: BigEnum) bool {
+    return p.current.kind == expected
+}
+
+fn switchOnKind(p: *Parser) string {
+    var tok = p.current
+    switch (tok.kind) {
+        BigEnum.V0 => { return "V0" }
+        BigEnum.V60 => { return "V60" }
+        BigEnum.V82 => { return "V82" }
+        BigEnum.V103 => { return "V103" }
+    }
+    return "other(" + string(tok.kind as i64) + ")"
+}
+
+fn main() i64 {
+    println("Testing large enum switch...")
+
+    var lex = Lexer{
+        .s1 = "src",
+        .s2 = 0,
+        .s3 = 0,
+        .s4 = 1,
+        .s5 = 1,
+        .s6 = 1,
+        .s7 = false,
+        .s8 = 0,
+    }
+
+    var tok = Token{
+        .kind = BigEnum.V60,
+        .text = "fn",
+    }
+
+    var parser = Parser{
+        .lexer = lex,
+        .current = tok,
+        .previous = tok,
+    }
+
+    println("Direct access: parser.current.kind = " + string(parser.current.kind as i64))
+
+    var p = &parser
+    println("Through pointer: p.current.kind = " + string(p.current.kind as i64))
+
+    println("")
+    println("checkKind(V60) = " + string(checkKind(p, BigEnum.V60)))
+    println("checkKind(V0) = " + string(checkKind(p, BigEnum.V0)))
+    println("switchOnKind = " + switchOnKind(p))
+
+    println("")
+    println("Changing to V103...")
+    p.current.kind = BigEnum.V103
+    println("p.current.kind = " + string(p.current.kind as i64))
+    println("checkKind(V103) = " + string(checkKind(p, BigEnum.V103)))
+    println("switchOnKind = " + switchOnKind(p))
+
+    println("")
+    println("Done!")
+    return 0
+}

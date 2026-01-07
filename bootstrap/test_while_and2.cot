@@ -1,0 +1,37 @@
+// Test while loop with function calls in 'and' condition
+
+fn isNotAtEnd(pos: i64) bool {
+    return pos < 5
+}
+
+fn isAlpha(ch: string) bool {
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z")
+}
+
+fn main() i64 {
+    const source = "const"
+    var current: i64 = 1
+
+    println("Starting with current = " + string(current))
+
+    var iterations: i64 = 0
+    while (isNotAtEnd(current) and isAlpha(source[current..current + 1])) {
+        println("Loop iteration " + string(iterations) + ", current = " + string(current))
+        current = current + 1
+        iterations = iterations + 1
+        if (iterations > 10) {
+            println("Safety limit")
+            return 1
+        }
+    }
+
+    println("After loop: current = " + string(current))
+    println("Iterations: " + string(iterations))
+
+    if (iterations != 4) {
+        println("ERROR: Expected 4 iterations (for 'onst'), got " + string(iterations))
+        return 1
+    }
+
+    return 0
+}

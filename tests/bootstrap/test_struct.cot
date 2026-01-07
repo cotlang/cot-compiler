@@ -1,0 +1,12 @@
+// Test 10: Struct init and field access (expected: 7)
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() i64 {
+    const p = Point{ .x = 3, .y = 4 }
+    const result = p.x + p.y
+    println(result)
+    return result
+}

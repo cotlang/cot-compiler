@@ -1,0 +1,95 @@
+// Test the exact parser pattern
+
+enum MyTokenType {
+    Invalid,
+    Ident,
+    Number,
+    Plus,
+    Eof,
+}
+
+struct MyToken {
+    token_type: MyTokenType,
+    lexeme: string,
+    line: i64,
+    column: i64,
+}
+
+struct MyLexer {
+    source: string,
+    pos: i64,
+}
+
+struct MyParser {
+    lexer: MyLexer,
+    current: MyToken,
+    previous: MyToken,
+}
+
+fn myLexerScan(lex: *MyLexer) MyToken {
+    lex.pos = lex.pos + 1
+    if (lex.pos > 3) {
+        return MyToken{
+            .token_type = MyTokenType.Eof,
+            .lexeme = "",
+            .line = 1,
+            .column = lex.pos,
+        }
+    }
+    return MyToken{
+        .token_type = MyTokenType.Ident,
+        .lexeme = "token" + string(lex.pos),
+        .line = 1,
+        .column = lex.pos,
+    }
+}
+
+fn myParserAdvance(p: *MyParser) {
+    p.previous = p.current
+    p.current = myLexerScan(&p.lexer)
+}
+
+fn myParserIsAtEnd(p: *MyParser) bool {
+    return p.current.token_type == MyTokenType.Eof
+}
+
+fn main() i64 {
+    println("Testing parser pattern...")
+
+    var lex = MyLexer{
+        .source = "test source",
+        .pos = 0,
+    }
+    var first = myLexerScan(&lex)
+
+    var parser = MyParser{
+        .lexer = lex,
+        .current = first,
+        .previous = first,
+    }
+
+    println("Initial state:")
+    println("  current.token_type: " + string(parser.current.token_type as i64))
+    println("  current.lexeme: " + parser.current.lexeme)
+    println("  current.column: " + string(parser.current.column))
+
+    var p = &parser
+    var count: i64 = 0
+
+    println("")
+    println("Advancing through tokens:")
+
+    while (!myParserIsAtEnd(p) and count < 10) {
+        println("  Token " + string(count) + ": type=" + string(p.current.token_type as i64) + " lexeme='" + p.current.lexeme + "'")
+        myParserAdvance(p)
+        count = count + 1
+    }
+
+    println("")
+    println("Final token: type=" + string(p.current.token_type as i64) + " lexeme='" + p.current.lexeme + "'")
+    println("Total tokens: " + string(count))
+
+    println("")
+    println("Done!")
+    return 0
+}

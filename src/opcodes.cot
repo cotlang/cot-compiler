@@ -1,0 +1,453 @@
+// Cot Bytecode Opcodes - Register-Based Architecture
+//
+// Essential opcodes for the self-hosted compiler bootstrap.
+// Matches the Zig VM instruction set.
+
+// =============================================================================
+// Opcode Enum
+// =============================================================================
+
+enum Opcode {
+    // Core Operations
+    Nop,
+    Halt,
+
+    // Register Moves & Immediates
+    Mov,
+    MovI,
+    MovI16,
+    MovI32,
+    LoadConst,
+    LoadNull,
+    LoadTrue,
+    LoadFalse,
+
+    // Local & Global Variables
+    LoadLocal,
+    StoreLocal,
+    LoadLocal16,
+    StoreLocal16,
+    LoadGlobal,
+    StoreGlobal,
+
+    // Arithmetic
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Neg,
+    AddI,
+    SubI,
+    MulI,
+    Incr,
+    Decr,
+
+    // Comparison
+    CmpEq,
+    CmpNe,
+    CmpLt,
+    CmpLe,
+    CmpGt,
+    CmpGe,
+    CmpStrEq,
+    CmpStrNe,
+
+    // Logical & Bitwise
+    LogAnd,
+    LogOr,
+    LogNot,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    IsNull,
+    Select,
+    Shl,
+    Shr,
+
+    // Control Flow
+    Jmp,
+    Jmp32,
+    Jz,
+    Jnz,
+    Jeq,
+    Jne,
+    Jlt,
+    Jge,
+    LoopStart,
+    LoopEnd,
+    SetErrorHandler,
+    ClearErrorHandler,
+    ThrowOp,
+
+    // Function Calls
+    Call,
+    CallExternal,
+    CallNative,
+    CallIndirect,
+    CallDynamic,
+    Ret,
+    RetVal,
+
+    // Record/Field Operations
+    NewRecord,
+    FreeRecord,
+    LoadField,
+    StoreField,
+    LoadFieldFast,
+    StoreFieldFast,
+    ClearRecord,
+
+    // String Operations
+    StrConcat,
+    StrLen,
+    StrIndex,
+    StrSlice,
+    StrTrim,
+    StrUpper,
+    StrLower,
+    StrFind,
+
+    // Type Conversion
+    ToInt,
+    ToStr,
+    ToBool,
+    ToChar,
+
+    // Array Operations
+    ArrayLoad,
+    ArrayStore,
+    ArrayLen,
+    ListLen,
+    ListClear,
+
+    // Terminal I/O
+    Print,
+    Println,
+    Readln,
+    Log,
+
+    // Map Operations
+    MapNew,
+    MapSet,
+    MapGet,
+    MapDelete,
+    MapHas,
+    MapLen,
+    MapClear,
+    MapKeys,
+    MapValues,
+
+    // List Operations
+    ListNew,
+    ListPush,
+    ListPop,
+    ListGet,
+    ListSet,
+
+    // Debug & Meta
+    DebugBreak,
+    DebugLine,
+    Assert,
+}
+
+// =============================================================================
+// Opcode Value Mapping
+// =============================================================================
+// Note: Bytecode values don't match enum ordinals (they're non-contiguous:
+// 0, 1, 16, 17, ..., 48, ..., 64, ...). A switch is required here.
+// The `as i64` casting gives ordinal values, which don't work for bytecode.
+
+fn opcodeValue(op: Opcode) i64 {
+    switch (op) {
+        Opcode.Nop => { return 0 }
+        Opcode.Halt => { return 1 }
+        Opcode.Mov => { return 16 }
+        Opcode.MovI => { return 17 }
+        Opcode.MovI16 => { return 18 }
+        Opcode.MovI32 => { return 19 }
+        Opcode.LoadConst => { return 20 }
+        Opcode.LoadNull => { return 21 }
+        Opcode.LoadTrue => { return 22 }
+        Opcode.LoadFalse => { return 23 }
+        Opcode.LoadLocal => { return 32 }
+        Opcode.StoreLocal => { return 33 }
+        Opcode.LoadLocal16 => { return 34 }
+        Opcode.StoreLocal16 => { return 35 }
+        Opcode.LoadGlobal => { return 36 }
+        Opcode.StoreGlobal => { return 37 }
+        Opcode.Add => { return 48 }
+        Opcode.Sub => { return 49 }
+        Opcode.Mul => { return 50 }
+        Opcode.Div => { return 51 }
+        Opcode.Mod => { return 52 }
+        Opcode.Neg => { return 53 }
+        Opcode.AddI => { return 54 }
+        Opcode.SubI => { return 55 }
+        Opcode.MulI => { return 56 }
+        Opcode.Incr => { return 57 }
+        Opcode.Decr => { return 58 }
+        Opcode.CmpEq => { return 64 }
+        Opcode.CmpNe => { return 65 }
+        Opcode.CmpLt => { return 66 }
+        Opcode.CmpLe => { return 67 }
+        Opcode.CmpGt => { return 68 }
+        Opcode.CmpGe => { return 69 }
+        Opcode.CmpStrEq => { return 70 }
+        Opcode.CmpStrNe => { return 72 }
+        Opcode.LogAnd => { return 80 }
+        Opcode.LogOr => { return 81 }
+        Opcode.LogNot => { return 82 }
+        Opcode.BitAnd => { return 83 }
+        Opcode.BitOr => { return 84 }
+        Opcode.BitXor => { return 85 }
+        Opcode.BitNot => { return 86 }
+        Opcode.IsNull => { return 87 }
+        Opcode.Select => { return 88 }
+        Opcode.Shl => { return 90 }
+        Opcode.Shr => { return 91 }
+        Opcode.Jmp => { return 96 }
+        Opcode.Jmp32 => { return 97 }
+        Opcode.Jz => { return 98 }
+        Opcode.Jnz => { return 99 }
+        Opcode.Jeq => { return 100 }
+        Opcode.Jne => { return 101 }
+        Opcode.Jlt => { return 102 }
+        Opcode.Jge => { return 103 }
+        Opcode.LoopStart => { return 104 }
+        Opcode.LoopEnd => { return 105 }
+        Opcode.SetErrorHandler => { return 106 }
+        Opcode.ClearErrorHandler => { return 107 }
+        Opcode.ThrowOp => { return 108 }
+        Opcode.Call => { return 112 }
+        Opcode.CallExternal => { return 113 }
+        Opcode.CallNative => { return 114 }
+        Opcode.CallIndirect => { return 115 }
+        Opcode.CallDynamic => { return 116 }
+        Opcode.Ret => { return 117 }
+        Opcode.RetVal => { return 118 }
+        Opcode.NewRecord => { return 128 }
+        Opcode.FreeRecord => { return 129 }
+        Opcode.LoadField => { return 130 }
+        Opcode.StoreField => { return 131 }
+        Opcode.LoadFieldFast => { return 132 }
+        Opcode.StoreFieldFast => { return 133 }
+        Opcode.ClearRecord => { return 136 }
+        Opcode.StrConcat => { return 144 }
+        Opcode.StrLen => { return 145 }
+        Opcode.StrIndex => { return 146 }
+        Opcode.StrSlice => { return 147 }
+        Opcode.StrTrim => { return 149 }
+        Opcode.StrUpper => { return 150 }
+        Opcode.StrLower => { return 151 }
+        Opcode.StrFind => { return 152 }
+        Opcode.ToInt => { return 160 }
+        Opcode.ToStr => { return 161 }
+        Opcode.ToBool => { return 162 }
+        Opcode.ToChar => { return 164 }
+        Opcode.ArrayLoad => { return 176 }
+        Opcode.ArrayStore => { return 177 }
+        Opcode.ArrayLen => { return 178 }
+        Opcode.ListLen => { return 179 }
+        Opcode.ListClear => { return 180 }
+        Opcode.Print => { return 208 }
+        Opcode.Println => { return 209 }
+        Opcode.Readln => { return 210 }
+        Opcode.Log => { return 212 }
+        Opcode.MapNew => { return 213 }
+        Opcode.MapSet => { return 214 }
+        Opcode.MapGet => { return 215 }
+        Opcode.MapDelete => { return 216 }
+        Opcode.MapHas => { return 217 }
+        Opcode.MapLen => { return 218 }
+        Opcode.MapClear => { return 219 }
+        Opcode.MapKeys => { return 220 }
+        Opcode.MapValues => { return 221 }
+        Opcode.ListNew => { return 237 }
+        Opcode.ListPush => { return 238 }
+        Opcode.ListPop => { return 239 }
+        Opcode.ListGet => { return 253 }
+        Opcode.ListSet => { return 255 }
+        Opcode.DebugBreak => { return 240 }
+        Opcode.DebugLine => { return 241 }
+        Opcode.Assert => { return 242 }
+    }
+}
+
+// =============================================================================
+// Operand Size
+// =============================================================================
+
+fn operandSize(op: Opcode) i64 {
+    switch (op) {
+        // No operands (0 bytes)
+        Opcode.Nop => { return 0 }
+        Opcode.Halt => { return 0 }
+        Opcode.LoopStart => { return 0 }
+        Opcode.LoopEnd => { return 0 }
+        Opcode.ClearErrorHandler => { return 0 }
+        Opcode.DebugBreak => { return 0 }
+
+        // 2-byte operands
+        Opcode.Mov => { return 2 }
+        Opcode.MovI => { return 2 }
+        Opcode.LoadLocal => { return 2 }
+        Opcode.StoreLocal => { return 2 }
+        Opcode.Add => { return 2 }
+        Opcode.Sub => { return 2 }
+        Opcode.Mul => { return 2 }
+        Opcode.Div => { return 2 }
+        Opcode.Mod => { return 2 }
+        Opcode.Neg => { return 2 }
+        Opcode.AddI => { return 2 }
+        Opcode.SubI => { return 2 }
+        Opcode.MulI => { return 2 }
+        Opcode.Incr => { return 2 }
+        Opcode.Decr => { return 2 }
+        Opcode.CmpEq => { return 2 }
+        Opcode.CmpNe => { return 2 }
+        Opcode.CmpLt => { return 2 }
+        Opcode.CmpLe => { return 2 }
+        Opcode.CmpGt => { return 2 }
+        Opcode.CmpGe => { return 2 }
+        Opcode.CmpStrEq => { return 2 }
+        Opcode.CmpStrNe => { return 2 }
+        Opcode.LogAnd => { return 2 }
+        Opcode.LogOr => { return 2 }
+        Opcode.LogNot => { return 2 }
+        Opcode.BitAnd => { return 2 }
+        Opcode.BitOr => { return 2 }
+        Opcode.BitXor => { return 2 }
+        Opcode.BitNot => { return 2 }
+        Opcode.IsNull => { return 2 }
+        Opcode.Select => { return 2 }
+        Opcode.Shl => { return 2 }
+        Opcode.Shr => { return 2 }
+        Opcode.LoadNull => { return 2 }
+        Opcode.LoadTrue => { return 2 }
+        Opcode.LoadFalse => { return 2 }
+        Opcode.Ret => { return 2 }
+        Opcode.RetVal => { return 2 }
+        Opcode.ThrowOp => { return 2 }
+        Opcode.FreeRecord => { return 2 }
+        Opcode.ClearRecord => { return 2 }
+        Opcode.LoadFieldFast => { return 2 }
+        Opcode.StoreFieldFast => { return 2 }
+        Opcode.StrConcat => { return 2 }
+        Opcode.StrLen => { return 2 }
+        Opcode.StrIndex => { return 2 }
+        Opcode.StrSlice => { return 2 }
+        Opcode.StrTrim => { return 2 }
+        Opcode.StrUpper => { return 2 }
+        Opcode.StrLower => { return 2 }
+        Opcode.StrFind => { return 2 }
+        Opcode.ToInt => { return 2 }
+        Opcode.ToStr => { return 2 }
+        Opcode.ToBool => { return 2 }
+        Opcode.ToChar => { return 2 }
+        Opcode.Print => { return 2 }
+        Opcode.Println => { return 2 }
+        Opcode.Readln => { return 2 }
+        Opcode.Log => { return 2 }
+        Opcode.CallIndirect => { return 2 }
+        Opcode.Assert => { return 2 }
+        Opcode.MapNew => { return 2 }
+        Opcode.MapSet => { return 2 }
+        Opcode.MapGet => { return 2 }
+        Opcode.MapDelete => { return 2 }
+        Opcode.MapHas => { return 2 }
+        Opcode.MapLen => { return 2 }
+        Opcode.MapClear => { return 2 }
+        Opcode.MapKeys => { return 2 }
+        Opcode.MapValues => { return 2 }
+        Opcode.ListNew => { return 2 }
+        Opcode.ListPush => { return 2 }
+        Opcode.ListPop => { return 2 }
+        Opcode.ListGet => { return 2 }
+        Opcode.ListSet => { return 2 }
+        Opcode.ListLen => { return 2 }
+        Opcode.ListClear => { return 2 }
+
+        // 3-byte operands
+        Opcode.MovI16 => { return 3 }
+        Opcode.LoadConst => { return 3 }
+        Opcode.LoadLocal16 => { return 3 }
+        Opcode.StoreLocal16 => { return 3 }
+        Opcode.LoadGlobal => { return 3 }
+        Opcode.StoreGlobal => { return 3 }
+        Opcode.Jmp => { return 3 }
+        Opcode.Jz => { return 3 }
+        Opcode.Jnz => { return 3 }
+        Opcode.Jeq => { return 3 }
+        Opcode.Jne => { return 3 }
+        Opcode.Jlt => { return 3 }
+        Opcode.Jge => { return 3 }
+        Opcode.SetErrorHandler => { return 3 }
+        Opcode.Call => { return 3 }
+        Opcode.CallExternal => { return 3 }
+        Opcode.CallNative => { return 3 }
+        Opcode.CallDynamic => { return 3 }
+        Opcode.NewRecord => { return 3 }
+        Opcode.LoadField => { return 3 }
+        Opcode.StoreField => { return 3 }
+        Opcode.DebugLine => { return 3 }
+        Opcode.ArrayLoad => { return 3 }
+        Opcode.ArrayStore => { return 3 }
+        Opcode.ArrayLen => { return 3 }
+
+        // 5-byte operands
+        Opcode.MovI32 => { return 5 }
+        Opcode.Jmp32 => { return 5 }
+    }
+}
+
+// =============================================================================
+// Opcode Name (for debugging)
+// =============================================================================
+
+fn opcodeName(op: Opcode) string {
+    switch (op) {
+        Opcode.Nop => { return "nop" }
+        Opcode.Halt => { return "halt" }
+        Opcode.Mov => { return "mov" }
+        Opcode.MovI => { return "movi" }
+        Opcode.MovI16 => { return "movi16" }
+        Opcode.MovI32 => { return "movi32" }
+        Opcode.LoadConst => { return "load_const" }
+        Opcode.LoadNull => { return "load_null" }
+        Opcode.LoadTrue => { return "load_true" }
+        Opcode.LoadFalse => { return "load_false" }
+        Opcode.LoadLocal => { return "load_local" }
+        Opcode.StoreLocal => { return "store_local" }
+        Opcode.LoadLocal16 => { return "load_local16" }
+        Opcode.StoreLocal16 => { return "store_local16" }
+        Opcode.LoadGlobal => { return "load_global" }
+        Opcode.StoreGlobal => { return "store_global" }
+        Opcode.Add => { return "add" }
+        Opcode.Sub => { return "sub" }
+        Opcode.Mul => { return "mul" }
+        Opcode.Div => { return "div" }
+        Opcode.Mod => { return "mod" }
+        Opcode.Neg => { return "neg" }
+        Opcode.CmpEq => { return "cmp_eq" }
+        Opcode.CmpNe => { return "cmp_ne" }
+        Opcode.CmpLt => { return "cmp_lt" }
+        Opcode.CmpLe => { return "cmp_le" }
+        Opcode.CmpGt => { return "cmp_gt" }
+        Opcode.CmpGe => { return "cmp_ge" }
+        Opcode.LogAnd => { return "log_and" }
+        Opcode.LogOr => { return "log_or" }
+        Opcode.LogNot => { return "log_not" }
+        Opcode.Jmp => { return "jmp" }
+        Opcode.Jz => { return "jz" }
+        Opcode.Jnz => { return "jnz" }
+        Opcode.Call => { return "call" }
+        Opcode.Ret => { return "ret" }
+        Opcode.RetVal => { return "ret_val" }
+        Opcode.Print => { return "print" }
+        Opcode.Println => { return "println" }
+        Opcode.DebugLine => { return "debug_line" }
+        else => { return "unknown" }
+    }
+}

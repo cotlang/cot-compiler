@@ -1,0 +1,51 @@
+// Test struct assignment to nested field through pointer
+
+struct Inner {
+    value: i64,
+    name: string,
+}
+
+struct Outer {
+    prefix: i64,
+    inner: Inner,
+    suffix: i64,
+}
+
+fn makeInner(v: i64, n: string) Inner {
+    return Inner{
+        .value = v,
+        .name = n,
+    }
+}
+
+fn main() i64 {
+    println("Testing struct assignment to nested field through pointer...")
+
+    var outer = Outer{
+        .prefix = 111,
+        .inner = Inner{
+            .value = 0,
+            .name = "",
+        },
+        .suffix = 333,
+    }
+
+    println("Before assignment:")
+    println("  outer.inner.value: " + string(outer.inner.value))
+    println("  outer.inner.name: '" + outer.inner.name + "'")
+
+    // Assign through pointer (like parserAdvance does)
+    var p = &outer
+    p.inner = makeInner(999, "updated")
+
+    println("")
+    println("After assignment through pointer:")
+    println("  outer.inner.value: " + string(outer.inner.value))
+    println("  outer.inner.name: '" + outer.inner.name + "'")
+    println("  p.inner.value: " + string(p.inner.value))
+    println("  p.inner.name: '" + p.inner.name + "'")
+
+    println("")
+    println("Done!")
+    return 0
+}

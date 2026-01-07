@@ -1,0 +1,79 @@
+// Test: Multiple List fields in a struct
+
+struct ManyLists {
+    a: List<i64>,
+    b: List<i64>,
+    c: List<i64>,
+    d: List<i64>,
+    e: List<i64>,
+    f: List<i64>,
+    g: List<i64>,
+    h: List<i64>,
+    i: List<i64>,
+    j: List<i64>,
+    k: List<i64>,
+    l: List<i64>,
+    m: List<string>,
+}
+
+fn newManyLists() ManyLists {
+    return ManyLists{
+        .a = List.new(),
+        .b = List.new(),
+        .c = List.new(),
+        .d = List.new(),
+        .e = List.new(),
+        .f = List.new(),
+        .g = List.new(),
+        .h = List.new(),
+        .i = List.new(),
+        .j = List.new(),
+        .k = List.new(),
+        .l = List.new(),
+        .m = List.new(),
+    }
+}
+
+fn addToA(s: *ManyLists, val: i64) {
+    s.a.push(val)
+}
+
+fn getALen(s: *ManyLists) i64 {
+    return s.a.len()
+}
+
+fn addToM(s: *ManyLists, val: string) {
+    s.m.push(val)
+}
+
+fn getMLen(s: *ManyLists) i64 {
+    return s.m.len()
+}
+
+fn getMItem(s: *ManyLists, idx: i64) string {
+    if (idx < 0 or idx >= s.m.len()) {
+        return ""
+    }
+    return s.m.get(idx)
+}
+
+fn main() {
+    println("=== Many Lists Test ===")
+
+    var ml: ManyLists = newManyLists()
+    println("Created struct with 13 list fields")
+
+    println("Initial a.len: " + string(ml.a.len()))
+    println("Initial m.len: " + string(ml.m.len()))
+
+    addToA(&ml, 42)
+    println("After addToA, a.len: " + string(getALen(&ml)))
+
+    addToM(&ml, "hello")
+    println("After addToM, m.len: " + string(getMLen(&ml)))
+
+    var item: string = getMItem(&ml, 0)
+    println("m[0] = " + item)
+
+    println("=== Done ===")
+}

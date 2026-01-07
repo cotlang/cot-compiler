@@ -1,0 +1,28 @@
+// Debug newParser return value
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Checking p.current.token_type...")
+    const tt = p.current.token_type
+    println("Token type: " + string(tt as i64))
+
+    println("Checking p.current.lexeme...")
+    const lex = p.current.lexeme
+    println("Lexeme: " + lex)
+
+    println("Checking p.current.line...")
+    const line = p.current.line
+    println("Line: " + string(line))
+
+    println("Done!")
+    return 0
+}

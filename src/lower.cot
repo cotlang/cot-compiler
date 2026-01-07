@@ -262,6 +262,13 @@ fn lowerExpr(l: Lowerer, expr: Expr) i64 {
         ExprKind.ArrayInitExpr => { return lowerArrayInitExpr(l, expr) }
         ExprKind.MethodCallExpr => { return lowerMethodCallExpr(l, expr) }
         ExprKind.CastExpr => { return lowerCastExpr(l, expr) }
+        ExprKind.IfExpr => { return lowerIfExpr(l, expr) }
+        ExprKind.BlockExpr => { return lowerBlockExpr(l, expr) }
+        ExprKind.SwitchExpr => { return lowerSwitchExpr(l, expr) }
+        ExprKind.LambdaExpr => { return lowerLambdaExpr(l, expr) }
+        ExprKind.RangeExpr => { return lowerRangeExpr(l, expr) }
+        ExprKind.SliceExpr => { return lowerSliceExpr(l, expr) }
+        ExprKind.InterpStringExpr => { return lowerInterpStringExpr(l, expr) }
         else => {
             lowerError(l, expr.loc.line, "Unhandled expression kind in lowering")
             return -1
@@ -627,6 +634,279 @@ fn lowerCastExpr(l: Lowerer, expr: Expr) i64 {
     return result_id
 }
 
+fn lowerIfExpr(l: Lowerer, expr: Expr) i64 {
+    // Lower condition
+    var cond_id: i64 = -1
+    if (expr.condition != null) {
+        cond_id = lowerExpr(l, expr.condition.*)
+    }
+
+    // Create blocks
+    const then_block = lowerCreateBlock(l, "if_then")
+    const else_block = lowerCreateBlock(l, "if_else")
+    const merge_block = lowerCreateBlock(l, "if_merge")
+
+    // Allocate result variable
+    const result_alloc = lowerNewValue(l)
+    var alloc_inst = newIRInst(IROp.Alloca)
+    alloc_inst.result_id = result_alloc
+    alloc_inst.line = expr.loc.line
+    lowerEmit(l, alloc_inst)
+
+    // Branch
+    var br_inst = newIRInst(IROp.BrIf)
+    br_inst.op1_id = cond_id
+    br_inst.target_block = then_block
+    br_inst.else_block = else_block
+    br_inst.line = expr.loc.line
+    lowerEmit(l, br_inst)
+
+    // Then block
+    lowerSwitchBlock(l, then_block)
+    if (expr.then_branch != null) {
+        const then_val = lowerExpr(l, expr.then_branch.*)
+        var store_inst = newIRInst(IROp.Store)
+        store_inst.op1_id = result_alloc
+        store_inst.op2_id = then_val
+        lowerEmit(l, store_inst)
+    }
+    var jmp = newIRInst(IROp.Jump)
+    jmp.target_block = merge_block
+    lowerEmit(l, jmp)
+
+    // Else block
+    lowerSwitchBlock(l, else_block)
+    if (expr.else_branch != null) {
+        const else_val = lowerExpr(l, expr.else_branch.*)
+        var store_inst = newIRInst(IROp.Store)
+        store_inst.op1_id = result_alloc
+        store_inst.op2_id = else_val
+        lowerEmit(l, store_inst)
+    }
+    jmp = newIRInst(IROp.Jump)
+    jmp.target_block = merge_block
+    lowerEmit(l, jmp)
+
+    // Merge block - load result
+    lowerSwitchBlock(l, merge_block)
+    const result_id = lowerNewValue(l)
+    var load_inst = newIRInst(IROp.Load)
+    load_inst.result_id = result_id
+    load_inst.op1_id = result_alloc
+    load_inst.line = expr.loc.line
+    lowerEmit(l, load_inst)
+
+    return result_id
+}
+
+fn lowerBlockExpr(l: Lowerer, expr: Expr) i64 {
+    lowerEnterScope(l)
+
+    // Lower all statements in the block
+    var i: i64 = 0
+    while (i < len(expr.stmts)) {
+        lowerStmt(l, expr.stmts[i].*)
+        i = i + 1
+    }
+
+    // Lower the result expression
+    var result_id: i64 = -1
+    if (expr.result != null) {
+        result_id = lowerExpr(l, expr.result.*)
+    }
+
+    lowerExitScope(l)
+    return result_id
+}
+
+fn lowerSwitchExpr(l: Lowerer, expr: Expr) i64 {
+    // Lower the switch condition
+    var switch_val: i64 = -1
+    if (expr.condition != null) {
+        switch_val = lowerExpr(l, expr.condition.*)
+    }
+
+    const exit_block = lowerCreateBlock(l, "switch_exit")
+
+    // Allocate result variable
+    const result_alloc = lowerNewValue(l)
+    var alloc_inst = newIRInst(IROp.Alloca)
+    alloc_inst.result_id = result_alloc
+    alloc_inst.line = expr.loc.line
+    lowerEmit(l, alloc_inst)
+
+    // Note: For a full implementation, we'd handle arms similar to switch statement
+    // For now, just use the first value as result
+    var jmp = newIRInst(IROp.Jump)
+    jmp.target_block = exit_block
+    lowerEmit(l, jmp)
+
+    lowerSwitchBlock(l, exit_block)
+    const result_id = lowerNewValue(l)
+    var load_inst = newIRInst(IROp.Load)
+    load_inst.result_id = result_id
+    load_inst.op1_id = result_alloc
+    load_inst.line = expr.loc.line
+    lowerEmit(l, load_inst)
+
+    return result_id
+}
+
+fn lowerLambdaExpr(l: Lowerer, expr: Expr) i64 {
+    // For lambdas, we create a closure/function reference
+    // For now, create a placeholder value
+    const result_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.IConst)
+    inst.result_id = result_id
+    inst.result_type_id = l.ir_types.i64_id
+    inst.int_val = 0  // Placeholder
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+
+    // Note: Full lambda support would create a closure struct with captures
+    return result_id
+}
+
+fn lowerRangeExpr(l: Lowerer, expr: Expr) i64 {
+    // Lower start and end
+    var start_id: i64 = -1
+    var end_id: i64 = -1
+
+    if (expr.range_start != null) {
+        start_id = lowerExpr(l, expr.range_start.*)
+    }
+    if (expr.range_end != null) {
+        end_id = lowerExpr(l, expr.range_end.*)
+    }
+
+    // Create a range struct (or tuple) with start and end
+    // For now, allocate and store both values
+    const alloc_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.Alloca)
+    inst.result_id = alloc_id
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+
+    // Store start at field 0
+    const start_ptr = lowerNewValue(l)
+    inst = newIRInst(IROp.FieldPtr)
+    inst.result_id = start_ptr
+    inst.op1_id = alloc_id
+    inst.field_index = 0
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = start_ptr
+    inst.op2_id = start_id
+    lowerEmit(l, inst)
+
+    // Store end at field 1
+    const end_ptr = lowerNewValue(l)
+    inst = newIRInst(IROp.FieldPtr)
+    inst.result_id = end_ptr
+    inst.op1_id = alloc_id
+    inst.field_index = 1
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = end_ptr
+    inst.op2_id = end_id
+    lowerEmit(l, inst)
+
+    // Load and return the range struct
+    const result_id = lowerNewValue(l)
+    inst = newIRInst(IROp.Load)
+    inst.result_id = result_id
+    inst.op1_id = alloc_id
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+
+    return result_id
+}
+
+fn lowerSliceExpr(l: Lowerer, expr: Expr) i64 {
+    // Lower the source object
+    var obj_id: i64 = -1
+    if (expr.object != null) {
+        obj_id = lowerExpr(l, expr.object.*)
+    }
+
+    // Lower start and end indices
+    var start_id: i64 = -1
+    var end_id: i64 = -1
+
+    if (expr.slice_start != null) {
+        start_id = lowerExpr(l, expr.slice_start.*)
+    } else {
+        // Default start is 0
+        start_id = lowerNewValue(l)
+        var inst = newIRInst(IROp.IConst)
+        inst.result_id = start_id
+        inst.int_val = 0
+        lowerEmit(l, inst)
+    }
+
+    if (expr.slice_end != null) {
+        end_id = lowerExpr(l, expr.slice_end.*)
+    }
+
+    // Emit SliceNew instruction
+    const result_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.SliceNew)
+    inst.result_id = result_id
+    inst.op1_id = obj_id
+    inst.op2_id = start_id
+    inst.op3_id = end_id
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+
+    return result_id
+}
+
+fn lowerInterpStringExpr(l: Lowerer, expr: Expr) i64 {
+    // Interpolated strings: "Hello ${name}!"
+    // Build the string by concatenating parts
+
+    if (len(expr.elements) == 0) {
+        // Empty string
+        const str_index = modAddString(l.module, "")
+        const result_id = lowerNewValue(l)
+        var inst = newIRInst(IROp.StrConst)
+        inst.result_id = result_id
+        inst.result_type_id = l.ir_types.string_id
+        inst.int_val = str_index
+        inst.str_val = ""
+        inst.line = expr.loc.line
+        lowerEmit(l, inst)
+        return result_id
+    }
+
+    // Lower first part
+    var result_id = lowerExpr(l, expr.elements[0].*)
+
+    // Concatenate remaining parts
+    var i: i64 = 1
+    while (i < len(expr.elements)) {
+        const part_id = lowerExpr(l, expr.elements[i].*)
+
+        // String concatenation
+        const concat_id = lowerNewValue(l)
+        var inst = newIRInst(IROp.StrConcat)
+        inst.result_id = concat_id
+        inst.op1_id = result_id
+        inst.op2_id = part_id
+        inst.line = expr.loc.line
+        lowerEmit(l, inst)
+
+        result_id = concat_id
+        i = i + 1
+    }
+
+    return result_id
+}
+
 fn lowerAssignment(l: Lowerer, expr: Expr) i64 {
     // Get the target (left side)
     var target_id: i64 = -1
@@ -706,12 +986,26 @@ fn lowerStmt(l: Lowerer, stmt: Stmt) {
         StmtKind.IfStmt => { lowerIfStmt(l, stmt) }
         StmtKind.WhileStmt => { lowerWhileStmt(l, stmt) }
         StmtKind.ForStmt => { lowerForStmt(l, stmt) }
+        StmtKind.LoopStmt => { lowerLoopStmt(l, stmt) }
         StmtKind.SwitchStmt => { lowerSwitchStmt(l, stmt) }
         StmtKind.BlockStmt => { lowerBlockStmt(l, stmt) }
         StmtKind.BreakStmt => { lowerBreakStmt(l, stmt) }
         StmtKind.ContinueStmt => { lowerContinueStmt(l, stmt) }
+        StmtKind.DeferStmt => { lowerDeferStmt(l, stmt) }
+        StmtKind.TryStmt => { lowerTryStmt(l, stmt) }
+        StmtKind.ThrowStmt => { lowerThrowStmt(l, stmt) }
+        StmtKind.ImplDecl => { lowerImplDecl(l, stmt) }
+        StmtKind.TestDecl => { lowerTestDecl(l, stmt) }
+        StmtKind.ViewDecl => { lowerViewDecl(l, stmt) }
+        StmtKind.ComptimeStmt => { lowerComptimeStmt(l, stmt) }
+        StmtKind.ImportStmt => { lowerImportStmt(l, stmt) }
+        StmtKind.StructDecl => { lowerStructDecl(l, stmt) }
+        StmtKind.EnumDecl => { lowerEnumDecl(l, stmt) }
+        StmtKind.UnionDecl => { lowerUnionDecl(l, stmt) }
+        StmtKind.TraitDecl => { lowerTraitDecl(l, stmt) }
+        StmtKind.TypeAliasDecl => { lowerTypeAliasDecl(l, stmt) }
         else => {
-            // Other statement types can be added as needed
+            // FunctionDecl handled at module level
         }
     }
 }
@@ -1128,6 +1422,209 @@ fn lowerSwitchArmBody(l: Lowerer, arm: SwitchArm, arm_block: i64, exit_block: i6
             lowerEmit(l, inst)
         }
     }
+}
+
+fn lowerLoopStmt(l: Lowerer, stmt: Stmt) {
+    // Infinite loop: loop { body }
+    const body_block = lowerCreateBlock(l, "loop_body")
+    const exit_block = lowerCreateBlock(l, "loop_exit")
+
+    // Jump to body
+    var jmp = newIRInst(IROp.Jump)
+    jmp.target_block = body_block
+    jmp.line = stmt.loc.line
+    lowerEmit(l, jmp)
+
+    // Body block
+    lowerSwitchBlock(l, body_block)
+    lowerEnterLoopScope(l, exit_block, body_block)
+
+    if (stmt.loop_body != null) {
+        lowerStmt(l, stmt.loop_body.*)
+    }
+
+    lowerExitScope(l)
+
+    // Jump back to body (if not terminated)
+    if (l.current_func_idx >= 0) {
+        const func = lowerGetCurrentFunc(l)
+        const bb = fnGetBlock(func, body_block)
+        if (not blockIsTerminated(bb)) {
+            var jmp_back = newIRInst(IROp.Jump)
+            jmp_back.target_block = body_block
+            lowerEmit(l, jmp_back)
+        }
+    }
+
+    // Continue from exit block
+    lowerSwitchBlock(l, exit_block)
+}
+
+fn lowerDeferStmt(l: Lowerer, stmt: Stmt) {
+    // Defer: push deferred expression onto a stack, execute at function/scope exit
+    // For now, emit the expression at point of defer (simplified)
+    // A full implementation would track deferred expressions and emit at scope exit
+    if (stmt.defer_expr != null) {
+        lowerExpr(l, stmt.defer_expr.*)
+    }
+}
+
+fn lowerTryStmt(l: Lowerer, stmt: Stmt) {
+    // Try/catch statement
+    const try_block = lowerCreateBlock(l, "try")
+    const catch_block = lowerCreateBlock(l, "catch")
+    const exit_block = lowerCreateBlock(l, "try_exit")
+
+    // Jump to try block
+    var jmp = newIRInst(IROp.Jump)
+    jmp.target_block = try_block
+    lowerEmit(l, jmp)
+
+    // Try block
+    lowerSwitchBlock(l, try_block)
+    lowerEnterScope(l)
+    if (stmt.try_body != null) {
+        lowerStmt(l, stmt.try_body.*)
+    }
+    lowerExitScope(l)
+
+    // Jump to exit (no error)
+    if (l.current_func_idx >= 0) {
+        const func = lowerGetCurrentFunc(l)
+        const tb = fnGetBlock(func, try_block)
+        if (not blockIsTerminated(tb)) {
+            jmp = newIRInst(IROp.Jump)
+            jmp.target_block = exit_block
+            lowerEmit(l, jmp)
+        }
+    }
+
+    // Catch block
+    lowerSwitchBlock(l, catch_block)
+    lowerEnterScope(l)
+
+    // Register catch variable if present
+    if (stmt.catch_var != "") {
+        const err_id = lowerNewValue(l)
+        var alloc_inst = newIRInst(IROp.Alloca)
+        alloc_inst.result_id = err_id
+        lowerEmit(l, alloc_inst)
+        lowerDefineVar(l, stmt.catch_var, err_id)
+    }
+
+    if (stmt.catch_body != null) {
+        lowerStmt(l, stmt.catch_body.*)
+    }
+    lowerExitScope(l)
+
+    // Jump to exit from catch
+    if (l.current_func_idx >= 0) {
+        const func = lowerGetCurrentFunc(l)
+        const cb = fnGetBlock(func, catch_block)
+        if (not blockIsTerminated(cb)) {
+            jmp = newIRInst(IROp.Jump)
+            jmp.target_block = exit_block
+            lowerEmit(l, jmp)
+        }
+    }
+
+    // Continue from exit
+    lowerSwitchBlock(l, exit_block)
+}
+
+fn lowerThrowStmt(l: Lowerer, stmt: Stmt) {
+    // Throw statement - emit the error value
+    if (stmt.throw_expr != null) {
+        const err_id = lowerExpr(l, stmt.throw_expr.*)
+
+        // Emit throw instruction
+        var inst = newIRInst(IROp.ErrThrow)
+        inst.op1_id = err_id
+        inst.line = stmt.loc.line
+        lowerEmit(l, inst)
+    }
+}
+
+fn lowerImplDecl(l: Lowerer, stmt: Stmt) {
+    // Impl block - lower each method as a function
+    var i: i64 = 0
+    while (i < len(stmt.impl_methods)) {
+        const method = stmt.impl_methods[i]
+        lowerFunction(l, method.*)
+        i = i + 1
+    }
+}
+
+fn lowerTestDecl(l: Lowerer, stmt: Stmt) {
+    // Test declaration - create a test function
+    var func = newIRFunction("test_${stmt.test_name}")
+    // Note: is_test field would be added to IRFunction
+
+    const func_idx = modAddFunction(l.module, func)
+    l.current_func_idx = func_idx
+
+    var cur_func = l.module.functions.get(func_idx)
+    const entry = fnCreateBlock(cur_func, "entry")
+    cur_func.entry_block = entry
+    l.current_block = entry
+
+    lowerEnterScope(l)
+
+    if (stmt.test_body != null) {
+        lowerStmt(l, stmt.test_body.*)
+    }
+
+    lowerExitScope(l)
+
+    l.current_func_idx = -1
+    l.current_block = -1
+}
+
+fn lowerViewDecl(l: Lowerer, stmt: Stmt) {
+    // View declaration - register in IR module
+    // Views are handled at type-level, not runtime
+    // Just record metadata for later use
+}
+
+fn lowerComptimeStmt(l: Lowerer, stmt: Stmt) {
+    // Comptime statement - for bootstrap, just lower the body normally
+    // Full comptime evaluation would happen during compilation
+    if (stmt.comptime_body != null) {
+        lowerStmt(l, stmt.comptime_body.*)
+    }
+}
+
+fn lowerImportStmt(l: Lowerer, stmt: Stmt) {
+    // Import statement - record the import path
+    // For bootstrap, imports are handled at module resolution level
+    // Metadata only - no runtime code emitted
+}
+
+fn lowerStructDecl(l: Lowerer, stmt: Stmt) {
+    // Struct declaration - metadata only, no runtime code
+    // Type information is tracked by the type checker
+    // Structs are instantiated via StructInitExpr
+}
+
+fn lowerEnumDecl(l: Lowerer, stmt: Stmt) {
+    // Enum declaration - metadata only, no runtime code
+    // Type information is tracked by the type checker
+    // Enum variants are used directly as integer constants
+}
+
+fn lowerUnionDecl(l: Lowerer, stmt: Stmt) {
+    // Union declaration - metadata only, no runtime code
+    // Type information is tracked by the type checker
+}
+
+fn lowerTraitDecl(l: Lowerer, stmt: Stmt) {
+    // Trait declaration - metadata only, no runtime code
+    // Trait information is used at type-check time for validation
+}
+
+fn lowerTypeAliasDecl(l: Lowerer, stmt: Stmt) {
+    // Type alias - metadata only, no runtime code
+    // The type checker resolves aliases to their underlying types
 }
 
 // =============================================================================

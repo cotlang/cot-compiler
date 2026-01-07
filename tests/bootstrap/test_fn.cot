@@ -1,0 +1,10 @@
+// Test 8: Function call (expected: 7)
+fn add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn main() i64 {
+    const result = add(3, 4)
+    println(result)
+    return result
+}

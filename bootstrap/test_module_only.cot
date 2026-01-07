@@ -1,0 +1,19 @@
+// Test just the Module struct with List<Stmt>
+import "../src/token"
+import "../src/ast"
+
+fn main() i64 {
+    println("Creating Module...")
+
+    var mod = newModule()
+    println("Module created")
+
+    println("Checking has_errors: " + string(mod.has_errors as i64))
+
+    println("Getting statement count...")
+    const count = mod.statements.len()
+    println("Count: " + string(count))
+
+    println("Done!")
+    return 0
+}

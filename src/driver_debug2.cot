@@ -1,0 +1,42 @@
+// Debug version 2 - more detailed
+
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+fn localCheck(p: *Parser, tt: TokenType) bool {
+    println("  localCheck: p.current.token_type = " + string(p.current.token_type as i64))
+    println("  localCheck: tt = " + string(tt as i64))
+    var result = p.current.token_type == tt
+    println("  localCheck: result = " + string(result))
+    return result
+}
+
+fn main() i64 {
+    println("=== Debug Driver 2 ===")
+
+    const source = "fn test() { }"
+    println("Source: " + source)
+
+    var parser = newParser(source)
+    println("Parser created")
+    println("parser.current.token_type = " + string(parser.current.token_type as i64))
+    println("TokenType.KwFn = " + string(TokenType.KwFn as i64))
+
+    var p = &parser
+
+    println("")
+    println("Testing localCheck (defined in this file):")
+    var local_result = localCheck(p, TokenType.KwFn)
+    println("localCheck result: " + string(local_result))
+
+    println("")
+    println("Testing parserCheck (from parser module):")
+    var parser_result = parserCheck(p, TokenType.KwFn)
+    println("parserCheck result: " + string(parser_result))
+
+    println("")
+    println("Done!")
+    return 0
+}

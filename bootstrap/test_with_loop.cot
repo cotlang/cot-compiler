@@ -1,0 +1,36 @@
+// Test calling parserIsAtEnd in a while loop
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn wrapperWithLoop(p: *Parser) bool {
+    println("Creating local module...")
+    var mod = newModule()
+    println("Module created")
+
+    var count = 0
+    while (!parserIsAtEnd(p)) {
+        println("In loop iteration: " + string(count))
+        count = count + 1
+        if (count >= 3) {
+            println("Breaking after 3 iterations")
+            break
+        }
+    }
+    println("Loop done")
+    return true
+}
+
+fn main() i64 {
+    println("Creating parser...")
+
+    const source = "fn main() { }"
+    var p = newParser(source)
+    println("Parser created")
+
+    println("Calling wrapper...")
+    const result = wrapperWithLoop(&p)
+    println("Done!")
+    return 0
+}

@@ -105,6 +105,19 @@ struct SourceLoc {
     end: i64,
 }
 
+// Module - top-level container for all parsed statements
+struct Module {
+    statements: List<Stmt>,
+    has_errors: bool,
+}
+
+fn newModule() Module {
+    return Module{
+        .statements = List.new(),
+        .has_errors = false,
+    }
+}
+
 // Type reference node
 struct TypeRef {
     kind: TypeKind,
