@@ -258,6 +258,10 @@ fn lowerExpr(l: Lowerer, expr: Expr) i64 {
         ExprKind.CallExpr => { return lowerCallExpr(l, expr) }
         ExprKind.FieldExpr => { return lowerFieldExpr(l, expr) }
         ExprKind.IndexExpr => { return lowerIndexExpr(l, expr) }
+        ExprKind.StructInitExpr => { return lowerStructInitExpr(l, expr) }
+        ExprKind.ArrayInitExpr => { return lowerArrayInitExpr(l, expr) }
+        ExprKind.MethodCallExpr => { return lowerMethodCallExpr(l, expr) }
+        ExprKind.CastExpr => { return lowerCastExpr(l, expr) }
         else => {
             lowerError(l, expr.loc.line, "Unhandled expression kind in lowering")
             return -1
@@ -339,6 +343,11 @@ fn lowerIdentifier(l: Lowerer, expr: Expr) i64 {
 }
 
 fn lowerBinaryExpr(l: Lowerer, expr: Expr) i64 {
+    // Handle assignment specially
+    if (expr.op == TokenType.Equals) {
+        return lowerAssignment(l, expr)
+    }
+
     // Lower operands
     var left_id: i64 = -1
     var right_id: i64 = -1
@@ -507,6 +516,179 @@ fn lowerIndexExpr(l: Lowerer, expr: Expr) i64 {
     return result_id
 }
 
+fn lowerStructInitExpr(l: Lowerer, expr: Expr) i64 {
+    // Allocate space for the struct
+    const alloc_id = lowerNewValue(l)
+    var alloc_inst = newIRInst(IROp.Alloca)
+    alloc_inst.result_id = alloc_id
+    alloc_inst.line = expr.loc.line
+    lowerEmit(l, alloc_inst)
+
+    // Initialize each field
+    var i: i64 = 0
+    while (i < len(expr.field_inits)) {
+        const field_init = expr.field_inits[i]
+
+        // Get field pointer
+        const field_ptr_id = lowerNewValue(l)
+        var field_inst = newIRInst(IROp.FieldPtr)
+        field_inst.result_id = field_ptr_id
+        field_inst.op1_id = alloc_id
+        field_inst.field_name = field_init.name
+        field_inst.field_index = i
+        field_inst.line = field_init.loc.line
+        lowerEmit(l, field_inst)
+
+        // Lower the value and store it
+        if (field_init.value != null) {
+            const val_id = lowerExpr(l, field_init.value.*)
+            var store_inst = newIRInst(IROp.Store)
+            store_inst.op1_id = field_ptr_id
+            store_inst.op2_id = val_id
+            store_inst.line = field_init.loc.line
+            lowerEmit(l, store_inst)
+        }
+        i = i + 1
+    }
+
+    // Load the struct value
+    const result_id = lowerNewValue(l)
+    var load_inst = newIRInst(IROp.Load)
+    load_inst.result_id = result_id
+    load_inst.op1_id = alloc_id
+    load_inst.line = expr.loc.line
+    lowerEmit(l, load_inst)
+    return result_id
+}
+
+fn lowerArrayInitExpr(l: Lowerer, expr: Expr) i64 {
+    // Create a new list/array
+    const list_id = lowerNewValue(l)
+    var list_inst = newIRInst(IROp.ListNew)
+    list_inst.result_id = list_id
+    list_inst.line = expr.loc.line
+    lowerEmit(l, list_inst)
+
+    // Push each element
+    var i: i64 = 0
+    while (i < len(expr.elements)) {
+        const elem_id = lowerExpr(l, expr.elements[i].*)
+        var push_inst = newIRInst(IROp.ListPush)
+        push_inst.op1_id = list_id
+        push_inst.op2_id = elem_id
+        push_inst.line = expr.loc.line
+        lowerEmit(l, push_inst)
+        i = i + 1
+    }
+
+    return list_id
+}
+
+fn lowerMethodCallExpr(l: Lowerer, expr: Expr) i64 {
+    // Lower the receiver object
+    var obj_id: i64 = -1
+    if (expr.object != null) {
+        obj_id = lowerExpr(l, expr.object.*)
+    }
+
+    const result_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.Call)
+    inst.result_id = result_id
+    inst.callee = expr.field_name  // Method name
+    inst.op1_id = obj_id           // Self/receiver as first arg
+    inst.line = expr.loc.line
+
+    // Add remaining arguments
+    if (len(expr.args) > 0) {
+        inst.op2_id = lowerExpr(l, expr.args[0].*)
+    }
+    if (len(expr.args) > 1) {
+        inst.op3_id = lowerExpr(l, expr.args[1].*)
+    }
+
+    lowerEmit(l, inst)
+    return result_id
+}
+
+fn lowerCastExpr(l: Lowerer, expr: Expr) i64 {
+    // Lower the expression being cast
+    var val_id: i64 = -1
+    if (expr.operand != null) {
+        val_id = lowerExpr(l, expr.operand.*)
+    }
+
+    // For now, emit a bitcast - actual conversion depends on types
+    const result_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.Bitcast)
+    inst.result_id = result_id
+    inst.op1_id = val_id
+    inst.line = expr.loc.line
+    lowerEmit(l, inst)
+    return result_id
+}
+
+fn lowerAssignment(l: Lowerer, expr: Expr) i64 {
+    // Get the target (left side)
+    var target_id: i64 = -1
+    if (expr.left != null) {
+        const left = expr.left.*
+        // For simple identifier, look up the variable
+        if (left.kind == ExprKind.IdentifierExpr) {
+            target_id = lowerLookupVar(l, left.name)
+        } else if (left.kind == ExprKind.FieldExpr) {
+            // Field assignment - get field pointer
+            var obj_id: i64 = -1
+            if (left.object != null) {
+                obj_id = lowerExpr(l, left.object.*)
+            }
+            target_id = lowerNewValue(l)
+            var field_inst = newIRInst(IROp.FieldPtr)
+            field_inst.result_id = target_id
+            field_inst.op1_id = obj_id
+            field_inst.field_name = left.field_name
+            field_inst.line = expr.loc.line
+            lowerEmit(l, field_inst)
+        } else if (left.kind == ExprKind.IndexExpr) {
+            // Index assignment - lower object and index, use ArrayStore
+            var obj_id: i64 = -1
+            var idx_id: i64 = -1
+            if (left.object != null) {
+                obj_id = lowerExpr(l, left.object.*)
+            }
+            if (left.index != null) {
+                idx_id = lowerExpr(l, left.index.*)
+            }
+            // Lower value and store
+            var val_id: i64 = -1
+            if (expr.right != null) {
+                val_id = lowerExpr(l, expr.right.*)
+            }
+            var store_inst = newIRInst(IROp.ArrayStore)
+            store_inst.op1_id = obj_id
+            store_inst.op2_id = idx_id
+            store_inst.op3_id = val_id
+            store_inst.line = expr.loc.line
+            lowerEmit(l, store_inst)
+            return val_id
+        }
+    }
+
+    // Lower the value (right side)
+    var val_id: i64 = -1
+    if (expr.right != null) {
+        val_id = lowerExpr(l, expr.right.*)
+    }
+
+    // Store the value
+    var store_inst = newIRInst(IROp.Store)
+    store_inst.op1_id = target_id
+    store_inst.op2_id = val_id
+    store_inst.line = expr.loc.line
+    lowerEmit(l, store_inst)
+
+    return val_id
+}
+
 // =============================================================================
 // Statement Lowering
 // =============================================================================
@@ -523,6 +705,8 @@ fn lowerStmt(l: Lowerer, stmt: Stmt) {
         StmtKind.ReturnStmt => { lowerReturnStmt(l, stmt) }
         StmtKind.IfStmt => { lowerIfStmt(l, stmt) }
         StmtKind.WhileStmt => { lowerWhileStmt(l, stmt) }
+        StmtKind.ForStmt => { lowerForStmt(l, stmt) }
+        StmtKind.SwitchStmt => { lowerSwitchStmt(l, stmt) }
         StmtKind.BlockStmt => { lowerBlockStmt(l, stmt) }
         StmtKind.BreakStmt => { lowerBreakStmt(l, stmt) }
         StmtKind.ContinueStmt => { lowerContinueStmt(l, stmt) }
@@ -700,6 +884,249 @@ fn lowerContinueStmt(l: Lowerer, stmt: Stmt) {
         lowerEmit(l, inst)
     } else {
         lowerError(l, stmt.loc.line, "continue outside of loop")
+    }
+}
+
+fn lowerForStmt(l: Lowerer, stmt: Stmt) {
+    // For loops: for (x in iter) { body }
+    // Simplified lowering - treat as while loop over range
+
+    // Create blocks
+    const cond_block = lowerCreateBlock(l, "for_cond")
+    const body_block = lowerCreateBlock(l, "for_body")
+    const exit_block = lowerCreateBlock(l, "for_exit")
+
+    // Lower the iterator and allocate index
+    var iter_id: i64 = -1
+    if (stmt.for_iter != null) {
+        iter_id = lowerExpr(l, stmt.for_iter.*)
+    }
+
+    // Allocate index, init to 0, jump to cond
+    const idx_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.Alloca)
+    inst.result_id = idx_id
+    lowerEmit(l, inst)
+
+    const zero_id = lowerNewValue(l)
+    inst = newIRInst(IROp.IConst)
+    inst.result_id = zero_id
+    inst.int_val = 0
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = idx_id
+    inst.op2_id = zero_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Jump)
+    inst.target_block = cond_block
+    lowerEmit(l, inst)
+
+    // Condition: idx < len(iter)
+    lowerSwitchBlock(l, cond_block)
+    lowerForCondition(l, idx_id, iter_id, body_block, exit_block, stmt.loc.line)
+
+    // Body
+    lowerSwitchBlock(l, body_block)
+    lowerForBody(l, stmt, idx_id, iter_id, cond_block, exit_block)
+
+    // Exit
+    lowerSwitchBlock(l, exit_block)
+}
+
+fn lowerForCondition(l: Lowerer, idx_id: i64, iter_id: i64, body_block: i64, exit_block: i64, line: i64) {
+    const cur_idx = lowerNewValue(l)
+    var inst = newIRInst(IROp.Load)
+    inst.result_id = cur_idx
+    inst.op1_id = idx_id
+    lowerEmit(l, inst)
+
+    const len_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ListLen)
+    inst.result_id = len_id
+    inst.op1_id = iter_id
+    lowerEmit(l, inst)
+
+    const cmp_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ICmp)
+    inst.result_id = cmp_id
+    inst.op1_id = cur_idx
+    inst.op2_id = len_id
+    inst.cond = CondCode.Slt
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.BrIf)
+    inst.op1_id = cmp_id
+    inst.target_block = body_block
+    inst.else_block = exit_block
+    lowerEmit(l, inst)
+}
+
+fn lowerForBody(l: Lowerer, stmt: Stmt, idx_id: i64, iter_id: i64, cond_block: i64, exit_block: i64) {
+    lowerEnterLoopScope(l, exit_block, cond_block)
+
+    // Load current index for element access
+    const cur_idx = lowerNewValue(l)
+    var inst = newIRInst(IROp.Load)
+    inst.result_id = cur_idx
+    inst.op1_id = idx_id
+    lowerEmit(l, inst)
+
+    // Get element
+    const elem_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ListGet)
+    inst.result_id = elem_id
+    inst.op1_id = iter_id
+    inst.op2_id = cur_idx
+    lowerEmit(l, inst)
+
+    // Alloc and store loop var
+    const var_id = lowerNewValue(l)
+    inst = newIRInst(IROp.Alloca)
+    inst.result_id = var_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = var_id
+    inst.op2_id = elem_id
+    lowerEmit(l, inst)
+
+    lowerDefineVar(l, stmt.for_var, var_id)
+
+    // Lower body
+    if (stmt.for_body != null) {
+        lowerStmt(l, stmt.for_body.*)
+    }
+
+    lowerExitScope(l)
+
+    // Increment and jump back
+    lowerForIncrement(l, idx_id, cond_block)
+}
+
+fn lowerForIncrement(l: Lowerer, idx_id: i64, cond_block: i64) {
+    const cur = lowerNewValue(l)
+    var inst = newIRInst(IROp.Load)
+    inst.result_id = cur
+    inst.op1_id = idx_id
+    lowerEmit(l, inst)
+
+    const one = lowerNewValue(l)
+    inst = newIRInst(IROp.IConst)
+    inst.result_id = one
+    inst.int_val = 1
+    lowerEmit(l, inst)
+
+    const next = lowerNewValue(l)
+    inst = newIRInst(IROp.IAdd)
+    inst.result_id = next
+    inst.op1_id = cur
+    inst.op2_id = one
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = idx_id
+    inst.op2_id = next
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Jump)
+    inst.target_block = cond_block
+    lowerEmit(l, inst)
+}
+
+fn lowerSwitchStmt(l: Lowerer, stmt: Stmt) {
+    // Lower the switch expression
+    var switch_val: i64 = -1
+    if (stmt.switch_expr != null) {
+        switch_val = lowerExpr(l, stmt.switch_expr.*)
+    }
+
+    const exit_block = lowerCreateBlock(l, "switch_exit")
+
+    // Create blocks for arms
+    var arm_blocks: List<i64> = List.new()
+    var i: i64 = 0
+    while (i < len(stmt.switch_arms)) {
+        arm_blocks.push(lowerCreateBlock(l, "switch_arm"))
+        i = i + 1
+    }
+
+    // Find default block
+    var default_block = exit_block
+    i = 0
+    while (i < len(stmt.switch_arms)) {
+        if (stmt.switch_arms[i].is_default) {
+            default_block = arm_blocks.get(i)
+        }
+        i = i + 1
+    }
+
+    // Generate comparisons
+    i = 0
+    while (i < len(stmt.switch_arms)) {
+        lowerSwitchArm(l, stmt.switch_arms[i], arm_blocks.get(i), switch_val)
+        i = i + 1
+    }
+
+    // Jump to default after all comparisons
+    var inst = newIRInst(IROp.Jump)
+    inst.target_block = default_block
+    lowerEmit(l, inst)
+
+    // Lower bodies
+    i = 0
+    while (i < len(stmt.switch_arms)) {
+        lowerSwitchArmBody(l, stmt.switch_arms[i], arm_blocks.get(i), exit_block)
+        i = i + 1
+    }
+
+    lowerSwitchBlock(l, exit_block)
+}
+
+fn lowerSwitchArm(l: Lowerer, arm: SwitchArm, arm_block: i64, switch_val: i64) {
+    if (arm.is_default) {
+        return
+    }
+
+    var pattern_val: i64 = -1
+    if (arm.pattern != null) {
+        pattern_val = lowerExpr(l, arm.pattern.*)
+    }
+
+    const cmp_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.ICmp)
+    inst.result_id = cmp_id
+    inst.op1_id = switch_val
+    inst.op2_id = pattern_val
+    inst.cond = CondCode.Eq
+    lowerEmit(l, inst)
+
+    const next_check = lowerCreateBlock(l, "switch_next")
+    inst = newIRInst(IROp.BrIf)
+    inst.op1_id = cmp_id
+    inst.target_block = arm_block
+    inst.else_block = next_check
+    lowerEmit(l, inst)
+
+    lowerSwitchBlock(l, next_check)
+}
+
+fn lowerSwitchArmBody(l: Lowerer, arm: SwitchArm, arm_block: i64, exit_block: i64) {
+    lowerSwitchBlock(l, arm_block)
+    if (arm.body != null) {
+        lowerExpr(l, arm.body.*)
+    }
+
+    // Jump to exit if not terminated
+    if (l.current_func_idx >= 0) {
+        const func = lowerGetCurrentFunc(l)
+        const bb = fnGetBlock(func, arm_block)
+        if (not blockIsTerminated(bb)) {
+            var inst = newIRInst(IROp.Jump)
+            inst.target_block = exit_block
+            lowerEmit(l, inst)
+        }
     }
 }
 
