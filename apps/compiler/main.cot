@@ -1,0 +1,23 @@
+// Compiler app entry point
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+fn main() i64 {
+    println("=== Cot Self-Hosted Compiler ===")
+    
+    const source = "fn add(a: i64, b: i64) i64 { return a + b }"
+    println("Source: " + source)
+    
+    var parser = Parser.create(source)
+    var mod = parser.parseModule()
+    
+    if (mod.has_errors) {
+        println("Parse errors!")
+        return 1
+    }
+    
+    println("Parsed " + string(mod.statements.len()) + " statements")
+    return 0
+}

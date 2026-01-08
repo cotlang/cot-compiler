@@ -29,6 +29,7 @@ enum TypeTag {
     Optional,       // ?T
     Array,          // [N]T (fixed size)
     Slice,          // []T (dynamic)
+    Range,          // start..end or start..=end
 
     // User-defined types
     StructType,     // struct { fields }
@@ -64,6 +65,9 @@ struct TypeInfo {
     // For Array - the fixed size
     array_size: i64,
 
+    // For Range - whether it's inclusive (..=)
+    range_inclusive: bool,
+
     // For Struct - name and fields
     struct_name: string,
     struct_fields: List<TypeField>,
@@ -84,6 +88,110 @@ struct TypeInfo {
 
     // For named types - the original name (for error messages)
     name: string,
+}
+
+impl TypeInfo {
+    fn init(tag: TypeTag, name: string) TypeInfo {
+        return TypeInfo{
+            .tag = tag,
+            .element_type_id = -1,
+            .array_size = 0,
+            .range_inclusive = false,
+            .struct_name = "",
+            .struct_fields = new List<TypeField>,
+            .enum_name = "",
+            .enum_variants = new List<TypeVariant>,
+            .fn_param_ids = new List<i64>,
+            .fn_return_id = -1,
+            .fn_variadic = false,
+            .generic_params = new List<string>,
+            .generic_arg_ids = new List<i64>,
+            .generic_base_id = -1,
+            .name = name,
+        }
+    }
+
+    fn isNumeric(self: TypeInfo) bool {
+        switch (self.tag) {
+            TypeTag.I8 => { return true }
+            TypeTag.I16 => { return true }
+            TypeTag.I32 => { return true }
+            TypeTag.I64 => { return true }
+            TypeTag.U8 => { return true }
+            TypeTag.U16 => { return true }
+            TypeTag.U32 => { return true }
+            TypeTag.U64 => { return true }
+            TypeTag.F32 => { return true }
+            TypeTag.F64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isInteger(self: TypeInfo) bool {
+        switch (self.tag) {
+            TypeTag.I8 => { return true }
+            TypeTag.I16 => { return true }
+            TypeTag.I32 => { return true }
+            TypeTag.I64 => { return true }
+            TypeTag.U8 => { return true }
+            TypeTag.U16 => { return true }
+            TypeTag.U32 => { return true }
+            TypeTag.U64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isFloat(self: TypeInfo) bool {
+        switch (self.tag) {
+            TypeTag.F32 => { return true }
+            TypeTag.F64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isSigned(self: TypeInfo) bool {
+        switch (self.tag) {
+            TypeTag.I8 => { return true }
+            TypeTag.I16 => { return true }
+            TypeTag.I32 => { return true }
+            TypeTag.I64 => { return true }
+            TypeTag.F32 => { return true }
+            TypeTag.F64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isPrimitive(self: TypeInfo) bool {
+        switch (self.tag) {
+            TypeTag.Void => { return true }
+            TypeTag.Bool => { return true }
+            TypeTag.I8 => { return true }
+            TypeTag.I16 => { return true }
+            TypeTag.I32 => { return true }
+            TypeTag.I64 => { return true }
+            TypeTag.U8 => { return true }
+            TypeTag.U16 => { return true }
+            TypeTag.U32 => { return true }
+            TypeTag.U64 => { return true }
+            TypeTag.F32 => { return true }
+            TypeTag.F64 => { return true }
+            TypeTag.StringType => { return true }
+            TypeTag.Char => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isError(self: TypeInfo) bool {
+        return self.tag == TypeTag.ErrorType
+    }
+
+    fn isGeneric(self: TypeInfo) bool {
+        return self.tag == TypeTag.GenericType or self.tag == TypeTag.GenericParam
+    }
+
+    fn isGenericInstance(self: TypeInfo) bool {
+        return self.tag == TypeTag.GenericType and self.generic_arg_ids.len() > 0
+    }
 }
 
 // =============================================================================
@@ -135,758 +243,533 @@ struct TypeRegistry {
     generic_instances: Map<string, i64>,
 }
 
-// =============================================================================
-// Registry Functions
-// =============================================================================
-
-fn newTypeRegistry() TypeRegistry {
-    const generic_defs: Map<string, i64> = Map.new()
-    const generic_instances: Map<string, i64> = Map.new()
-
-    var reg = TypeRegistry{
-        .types = List.new(),
-        .void_id = -1,
-        .bool_id = -1,
-        .i8_id = -1,
-        .i16_id = -1,
-        .i32_id = -1,
-        .i64_id = -1,
-        .u8_id = -1,
-        .u16_id = -1,
-        .u32_id = -1,
-        .u64_id = -1,
-        .f32_id = -1,
-        .f64_id = -1,
-        .string_id = -1,
-        .char_id = -1,
-        .error_id = -1,
-        .generic_defs = generic_defs,
-        .generic_instances = generic_instances,
-    }
-
-    // Register primitive types
-    reg.void_id = regAddPrimitiveType(reg, TypeTag.Void, "void")
-    reg.bool_id = regAddPrimitiveType(reg, TypeTag.Bool, "bool")
-    reg.i8_id = regAddPrimitiveType(reg, TypeTag.I8, "i8")
-    reg.i16_id = regAddPrimitiveType(reg, TypeTag.I16, "i16")
-    reg.i32_id = regAddPrimitiveType(reg, TypeTag.I32, "i32")
-    reg.i64_id = regAddPrimitiveType(reg, TypeTag.I64, "i64")
-    reg.u8_id = regAddPrimitiveType(reg, TypeTag.U8, "u8")
-    reg.u16_id = regAddPrimitiveType(reg, TypeTag.U16, "u16")
-    reg.u32_id = regAddPrimitiveType(reg, TypeTag.U32, "u32")
-    reg.u64_id = regAddPrimitiveType(reg, TypeTag.U64, "u64")
-    reg.f32_id = regAddPrimitiveType(reg, TypeTag.F32, "f32")
-    reg.f64_id = regAddPrimitiveType(reg, TypeTag.F64, "f64")
-    reg.string_id = regAddPrimitiveType(reg, TypeTag.StringType, "string")
-    reg.char_id = regAddPrimitiveType(reg, TypeTag.Char, "char")
-    reg.error_id = regAddPrimitiveType(reg, TypeTag.ErrorType, "<error>")
-
-    return reg
-}
-
-fn regAddPrimitiveType(reg: TypeRegistry, tag: TypeTag, name: string) i64 {
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = tag,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = name,
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regGetType(reg: TypeRegistry, id: i64) TypeInfo {
-    return reg.types.get(id)
-}
-
-fn regAddPointerType(reg: TypeRegistry, inner_id: i64) i64 {
-    const id = reg.types.len()
-    const inner = regGetType(reg, inner_id)
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.Pointer,
-        .element_type_id = inner_id,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = "*${inner.name}",
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regAddOptionalType(reg: TypeRegistry, inner_id: i64) i64 {
-    const id = reg.types.len()
-    const inner = regGetType(reg, inner_id)
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.Optional,
-        .element_type_id = inner_id,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = "?${inner.name}",
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regAddArrayType(reg: TypeRegistry, inner_id: i64, size: i64) i64 {
-    const id = reg.types.len()
-    const inner = regGetType(reg, inner_id)
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.Array,
-        .element_type_id = inner_id,
-        .array_size = size,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = "[${size}]${inner.name}",
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regAddSliceType(reg: TypeRegistry, inner_id: i64) i64 {
-    const id = reg.types.len()
-    const inner = regGetType(reg, inner_id)
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.Slice,
-        .element_type_id = inner_id,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = "[]${inner.name}",
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regAddStructType(reg: TypeRegistry, name: string) i64 {
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.StructType,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = name,
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = name,
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regAddEnumType(reg: TypeRegistry, name: string) i64 {
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.EnumType,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = name,
-        .enum_variants = variants,
-        .fn_param_ids = params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = name,
-    }
-    reg.types.push(t)
-    return id
-}
-
-fn regAddFunctionType(reg: TypeRegistry, param_ids: List<i64>, return_id: i64) i64 {
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.FunctionType,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = param_ids,
-        .fn_return_id = return_id,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = "fn(...)",
-    }
-    reg.types.push(t)
-    return id
-}
-
-// =============================================================================
-// Generic Type Functions
-// =============================================================================
-
-// Register a generic type definition (e.g., "List" with params ["T"])
-fn regAddGenericType(reg: TypeRegistry, name: string, params: List<string>) i64 {
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const fn_params: List<i64> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.GenericType,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = name,
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = fn_params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = name,
-    }
-    reg.types.push(t)
-    reg.generic_defs.set(name, id)
-    return id
-}
-
-// Create a generic type instance (e.g., List[i64])
-// Returns cached instance if one exists
-fn regAddGenericInstance(reg: TypeRegistry, base_name: string, arg_ids: List<i64>) i64 {
-    // Build cache key: "List[i64]" or "Map[string, i64]"
-    var cache_key = base_name
-    cache_key = "${cache_key}["
-    var i: i64 = 0
-    while (i < arg_ids.len()) {
-        if (i > 0) {
-            cache_key = "${cache_key}, "
+impl TypeRegistry {
+    fn init() TypeRegistry {
+        var reg = TypeRegistry{
+            .types = new List<TypeInfo>,
+            .void_id = -1,
+            .bool_id = -1,
+            .i8_id = -1,
+            .i16_id = -1,
+            .i32_id = -1,
+            .i64_id = -1,
+            .u8_id = -1,
+            .u16_id = -1,
+            .u32_id = -1,
+            .u64_id = -1,
+            .f32_id = -1,
+            .f64_id = -1,
+            .string_id = -1,
+            .char_id = -1,
+            .error_id = -1,
+            .generic_defs = new Map<string, i64>,
+            .generic_instances = new Map<string, i64>,
         }
-        const arg_type = regGetType(reg, arg_ids.get(i))
-        cache_key = "${cache_key}${arg_type.name}"
-        i = i + 1
-    }
-    cache_key = "${cache_key}]"
 
-    // Check cache
-    if (reg.generic_instances.has(cache_key)) {
-        return reg.generic_instances.get(cache_key)
-    }
+        // Register primitive types
+        reg.void_id = reg.addPrimitiveType(TypeTag.Void, "void")
+        reg.bool_id = reg.addPrimitiveType(TypeTag.Bool, "bool")
+        reg.i8_id = reg.addPrimitiveType(TypeTag.I8, "i8")
+        reg.i16_id = reg.addPrimitiveType(TypeTag.I16, "i16")
+        reg.i32_id = reg.addPrimitiveType(TypeTag.I32, "i32")
+        reg.i64_id = reg.addPrimitiveType(TypeTag.I64, "i64")
+        reg.u8_id = reg.addPrimitiveType(TypeTag.U8, "u8")
+        reg.u16_id = reg.addPrimitiveType(TypeTag.U16, "u16")
+        reg.u32_id = reg.addPrimitiveType(TypeTag.U32, "u32")
+        reg.u64_id = reg.addPrimitiveType(TypeTag.U64, "u64")
+        reg.f32_id = reg.addPrimitiveType(TypeTag.F32, "f32")
+        reg.f64_id = reg.addPrimitiveType(TypeTag.F64, "f64")
+        reg.string_id = reg.addPrimitiveType(TypeTag.StringType, "string")
+        reg.char_id = reg.addPrimitiveType(TypeTag.Char, "char")
+        reg.error_id = reg.addPrimitiveType(TypeTag.ErrorType, "<error>")
 
-    // Create new instance
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const fn_params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-
-    // Get base generic type ID
-    var base_id: i64 = -1
-    if (reg.generic_defs.has(base_name)) {
-        base_id = reg.generic_defs.get(base_name)
+        return reg
     }
 
-    const t = TypeInfo{
-        .tag = TypeTag.GenericType,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = base_name,
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = fn_params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = arg_ids,
-        .generic_base_id = base_id,
-        .name = cache_key,
-    }
-    reg.types.push(t)
-    reg.generic_instances.set(cache_key, id)
-    return id
-}
-
-// Register a type parameter placeholder (e.g., T in List[T])
-fn regAddTypeParam(reg: TypeRegistry, name: string) i64 {
-    const id = reg.types.len()
-    const fields: List<TypeField> = List.new()
-    const variants: List<TypeVariant> = List.new()
-    const fn_params: List<i64> = List.new()
-    const generic_params: List<string> = List.new()
-    const generic_args: List<i64> = List.new()
-    const t = TypeInfo{
-        .tag = TypeTag.GenericParam,
-        .element_type_id = -1,
-        .array_size = 0,
-        .struct_name = "",
-        .struct_fields = fields,
-        .enum_name = "",
-        .enum_variants = variants,
-        .fn_param_ids = fn_params,
-        .fn_return_id = -1,
-        .fn_variadic = false,
-        .generic_params = generic_params,
-        .generic_arg_ids = generic_args,
-        .generic_base_id = -1,
-        .name = name,
-    }
-    reg.types.push(t)
-    return id
-}
-
-// Check if a type is a generic type (either definition or instance)
-fn isGenericType(t: TypeInfo) bool {
-    return t.tag == TypeTag.GenericType or t.tag == TypeTag.GenericParam
-}
-
-// Check if a generic type has been fully instantiated (has concrete type args)
-fn isGenericInstance(t: TypeInfo) bool {
-    return t.tag == TypeTag.GenericType and t.generic_arg_ids.len() > 0
-}
-
-// =============================================================================
-// Type Predicates
-// =============================================================================
-
-fn isNumericType(t: TypeInfo) bool {
-    switch (t.tag) {
-        TypeTag.I8 => { return true }
-        TypeTag.I16 => { return true }
-        TypeTag.I32 => { return true }
-        TypeTag.I64 => { return true }
-        TypeTag.U8 => { return true }
-        TypeTag.U16 => { return true }
-        TypeTag.U32 => { return true }
-        TypeTag.U64 => { return true }
-        TypeTag.F32 => { return true }
-        TypeTag.F64 => { return true }
-    }
-    return false
-}
-
-fn isIntegerType(t: TypeInfo) bool {
-    switch (t.tag) {
-        TypeTag.I8 => { return true }
-        TypeTag.I16 => { return true }
-        TypeTag.I32 => { return true }
-        TypeTag.I64 => { return true }
-        TypeTag.U8 => { return true }
-        TypeTag.U16 => { return true }
-        TypeTag.U32 => { return true }
-        TypeTag.U64 => { return true }
-    }
-    return false
-}
-
-fn isFloatType(t: TypeInfo) bool {
-    switch (t.tag) {
-        TypeTag.F32 => { return true }
-        TypeTag.F64 => { return true }
-    }
-    return false
-}
-
-fn isSignedType(t: TypeInfo) bool {
-    switch (t.tag) {
-        TypeTag.I8 => { return true }
-        TypeTag.I16 => { return true }
-        TypeTag.I32 => { return true }
-        TypeTag.I64 => { return true }
-        TypeTag.F32 => { return true }
-        TypeTag.F64 => { return true }
-    }
-    return false
-}
-
-fn isPrimitiveType(t: TypeInfo) bool {
-    switch (t.tag) {
-        TypeTag.Void => { return true }
-        TypeTag.Bool => { return true }
-        TypeTag.I8 => { return true }
-        TypeTag.I16 => { return true }
-        TypeTag.I32 => { return true }
-        TypeTag.I64 => { return true }
-        TypeTag.U8 => { return true }
-        TypeTag.U16 => { return true }
-        TypeTag.U32 => { return true }
-        TypeTag.U64 => { return true }
-        TypeTag.F32 => { return true }
-        TypeTag.F64 => { return true }
-        TypeTag.StringType => { return true }
-        TypeTag.Char => { return true }
-    }
-    return false
-}
-
-fn isErrorType(t: TypeInfo) bool {
-    return t.tag == TypeTag.ErrorType
-}
-
-fn isErrorTypeId(reg: TypeRegistry, id: i64) bool {
-    if (id < 0) {
-        return true
-    }
-    const t = regGetType(reg, id)
-    return t.tag == TypeTag.ErrorType
-}
-
-// =============================================================================
-// Type Equality
-// =============================================================================
-
-fn typesEqualById(reg: TypeRegistry, a_id: i64, b_id: i64) bool {
-    // Same ID = same type
-    if (a_id == b_id) {
-        return true
+    fn addPrimitiveType(self: TypeRegistry, tag: TypeTag, name: string) i64 {
+        const id = self.types.len()
+        const t = TypeInfo.init(tag, name)
+        self.types.push(t)
+        return id
     }
 
-    // Handle -1 (null) cases
-    if (a_id < 0 or b_id < 0) {
-        return false
+    fn getType(self: TypeRegistry, id: i64) TypeInfo {
+        return self.types.get(id)
     }
 
-    const a = regGetType(reg, a_id)
-    const b = regGetType(reg, b_id)
-
-    // Different tags = different types
-    if (a.tag != b.tag) {
-        return false
+    fn addPointerType(self: TypeRegistry, inner_id: i64) i64 {
+        const id = self.types.len()
+        const inner = self.getType(inner_id)
+        var t = TypeInfo.init(TypeTag.Pointer, "*${inner.name}")
+        t.element_type_id = inner_id
+        self.types.push(t)
+        return id
     }
 
-    switch (a.tag) {
-        // Primitive types - tag equality is sufficient
-        TypeTag.Void => { return true }
-        TypeTag.Bool => { return true }
-        TypeTag.I8 => { return true }
-        TypeTag.I16 => { return true }
-        TypeTag.I32 => { return true }
-        TypeTag.I64 => { return true }
-        TypeTag.U8 => { return true }
-        TypeTag.U16 => { return true }
-        TypeTag.U32 => { return true }
-        TypeTag.U64 => { return true }
-        TypeTag.F32 => { return true }
-        TypeTag.F64 => { return true }
-        TypeTag.StringType => { return true }
-        TypeTag.Char => { return true }
-        TypeTag.Never => { return true }
-        TypeTag.Any => { return true }
-        TypeTag.ErrorType => { return true }
+    fn addOptionalType(self: TypeRegistry, inner_id: i64) i64 {
+        const id = self.types.len()
+        const inner = self.getType(inner_id)
+        var t = TypeInfo.init(TypeTag.Optional, "?${inner.name}")
+        t.element_type_id = inner_id
+        self.types.push(t)
+        return id
+    }
 
-        // Compound types - check element types
-        TypeTag.Pointer => {
-            return typesEqualById(reg, a.element_type_id, b.element_type_id)
-        }
-        TypeTag.Optional => {
-            return typesEqualById(reg, a.element_type_id, b.element_type_id)
-        }
-        TypeTag.Slice => {
-            return typesEqualById(reg, a.element_type_id, b.element_type_id)
-        }
-        TypeTag.Array => {
-            if (a.array_size != b.array_size) {
-                return false
+    fn addArrayType(self: TypeRegistry, inner_id: i64, size: i64) i64 {
+        const id = self.types.len()
+        const inner = self.getType(inner_id)
+        var t = TypeInfo.init(TypeTag.Array, "[${size}]${inner.name}")
+        t.element_type_id = inner_id
+        t.array_size = size
+        self.types.push(t)
+        return id
+    }
+
+    fn addSliceType(self: TypeRegistry, inner_id: i64) i64 {
+        const id = self.types.len()
+        const inner = self.getType(inner_id)
+        var t = TypeInfo.init(TypeTag.Slice, "[]${inner.name}")
+        t.element_type_id = inner_id
+        self.types.push(t)
+        return id
+    }
+
+    fn addStructType(self: TypeRegistry, name: string) i64 {
+        const id = self.types.len()
+        var t = TypeInfo.init(TypeTag.StructType, name)
+        t.struct_name = name
+        self.types.push(t)
+        return id
+    }
+
+    fn addEnumType(self: TypeRegistry, name: string) i64 {
+        const id = self.types.len()
+        var t = TypeInfo.init(TypeTag.EnumType, name)
+        t.enum_name = name
+        self.types.push(t)
+        return id
+    }
+
+    fn addFunctionType(self: TypeRegistry, param_ids: List<i64>, return_id: i64) i64 {
+        const id = self.types.len()
+        var t = TypeInfo.init(TypeTag.FunctionType, "fn(...)")
+        t.fn_param_ids = param_ids
+        t.fn_return_id = return_id
+        self.types.push(t)
+        return id
+    }
+
+    fn addGenericType(self: TypeRegistry, name: string, params: List<string>) i64 {
+        const id = self.types.len()
+        var t = TypeInfo.init(TypeTag.GenericType, name)
+        t.struct_name = name
+        t.generic_params = params
+        self.types.push(t)
+        self.generic_defs.set(name, id)
+        return id
+    }
+
+    fn addGenericInstance(self: TypeRegistry, base_name: string, arg_ids: List<i64>) i64 {
+        // Build cache key: "List[i64]" or "Map[string, i64]"
+        var cache_key = "${base_name}["
+        for i in 0..arg_ids.len() {
+            if (i > 0) {
+                cache_key = "${cache_key}, "
             }
-            return typesEqualById(reg, a.element_type_id, b.element_type_id)
+            const arg_type = self.getType(arg_ids.get(i))
+            cache_key = "${cache_key}${arg_type.name}"
+        }
+        cache_key = "${cache_key}]"
+
+        // Check cache
+        if (self.generic_instances.has(cache_key)) {
+            return self.generic_instances.get(cache_key)
         }
 
-        // Named types - compare by name
-        TypeTag.StructType => {
-            return a.struct_name == b.struct_name
-        }
-        TypeTag.EnumType => {
-            return a.enum_name == b.enum_name
+        // Create new instance
+        const id = self.types.len()
+
+        // Get base generic type ID
+        var base_id: i64 = -1
+        if (self.generic_defs.has(base_name)) {
+            base_id = self.generic_defs.get(base_name)
         }
 
-        // Function types - compare params and return
-        TypeTag.FunctionType => {
-            if (a.fn_param_ids.len() != b.fn_param_ids.len()) {
-                return false
-            }
-            var i: i64 = 0
-            while (i < a.fn_param_ids.len()) {
-                const pa = a.fn_param_ids.get(i)
-                const pb = b.fn_param_ids.get(i)
-                if (not typesEqualById(reg, pa, pb)) {
-                    return false
-                }
-                i = i + 1
-            }
-            return typesEqualById(reg, a.fn_return_id, b.fn_return_id)
-        }
+        var t = TypeInfo.init(TypeTag.GenericType, cache_key)
+        t.struct_name = base_name
+        t.generic_arg_ids = arg_ids
+        t.generic_base_id = base_id
 
-        // Generic types - compare by name and type args
-        TypeTag.GenericType => {
-            if (a.struct_name != b.struct_name) {
-                return false
-            }
-            if (a.generic_arg_ids.len() != b.generic_arg_ids.len()) {
-                return false
-            }
-            var i: i64 = 0
-            while (i < a.generic_arg_ids.len()) {
-                if (not typesEqualById(reg, a.generic_arg_ids.get(i), b.generic_arg_ids.get(i))) {
-                    return false
-                }
-                i = i + 1
-            }
+        self.types.push(t)
+        self.generic_instances.set(cache_key, id)
+        return id
+    }
+
+    fn addTypeParam(self: TypeRegistry, name: string) i64 {
+        const id = self.types.len()
+        const t = TypeInfo.init(TypeTag.GenericParam, name)
+        self.types.push(t)
+        return id
+    }
+
+    fn isErrorTypeId(self: TypeRegistry, id: i64) bool {
+        if (id < 0) {
+            return true
+        }
+        const t = self.getType(id)
+        return t.tag == TypeTag.ErrorType
+    }
+
+    fn typesEqual(self: TypeRegistry, a_id: i64, b_id: i64) bool {
+        // Same ID = same type
+        if (a_id == b_id) {
             return true
         }
 
-        // Generic params - compare by name
-        TypeTag.GenericParam => {
-            return a.name == b.name
+        // Handle -1 (null) cases
+        if (a_id < 0 or b_id < 0) {
+            return false
         }
 
-        // Unresolved types are never equal
-        TypeTag.Unresolved => { return false }
-    }
-    return false
-}
+        const a = self.getType(a_id)
+        const b = self.getType(b_id)
 
-// =============================================================================
-// Type Stringification
-// =============================================================================
-
-fn typeToString(reg: TypeRegistry, type_id: i64) string {
-    if (type_id < 0) {
-        return "<null>"
-    }
-
-    const t = regGetType(reg, type_id)
-
-    // Use the precomputed name if available
-    if (t.name != "") {
-        return t.name
-    }
-
-    switch (t.tag) {
-        TypeTag.Void => { return "void" }
-        TypeTag.Bool => { return "bool" }
-        TypeTag.I8 => { return "i8" }
-        TypeTag.I16 => { return "i16" }
-        TypeTag.I32 => { return "i32" }
-        TypeTag.I64 => { return "i64" }
-        TypeTag.U8 => { return "u8" }
-        TypeTag.U16 => { return "u16" }
-        TypeTag.U32 => { return "u32" }
-        TypeTag.U64 => { return "u64" }
-        TypeTag.F32 => { return "f32" }
-        TypeTag.F64 => { return "f64" }
-        TypeTag.StringType => { return "string" }
-        TypeTag.Char => { return "char" }
-        TypeTag.Never => { return "!" }
-        TypeTag.Any => { return "any" }
-        TypeTag.ErrorType => { return "<error>" }
-        TypeTag.Unresolved => { return "<unresolved>" }
-
-        TypeTag.Pointer => {
-            return "*${typeToString(reg, t.element_type_id)}"
-        }
-        TypeTag.Optional => {
-            return "?${typeToString(reg, t.element_type_id)}"
-        }
-        TypeTag.Slice => {
-            return "[]${typeToString(reg, t.element_type_id)}"
-        }
-        TypeTag.Array => {
-            return "[${t.array_size}]${typeToString(reg, t.element_type_id)}"
+        // Different tags = different types
+        if (a.tag != b.tag) {
+            return false
         }
 
-        TypeTag.StructType => { return t.struct_name }
-        TypeTag.EnumType => { return t.enum_name }
+        switch (a.tag) {
+            // Primitive types - tag equality is sufficient
+            TypeTag.Void => { return true }
+            TypeTag.Bool => { return true }
+            TypeTag.I8 => { return true }
+            TypeTag.I16 => { return true }
+            TypeTag.I32 => { return true }
+            TypeTag.I64 => { return true }
+            TypeTag.U8 => { return true }
+            TypeTag.U16 => { return true }
+            TypeTag.U32 => { return true }
+            TypeTag.U64 => { return true }
+            TypeTag.F32 => { return true }
+            TypeTag.F64 => { return true }
+            TypeTag.StringType => { return true }
+            TypeTag.Char => { return true }
+            TypeTag.Never => { return true }
+            TypeTag.Any => { return true }
+            TypeTag.ErrorType => { return true }
 
-        TypeTag.FunctionType => {
-            var result = "fn("
-            var i: i64 = 0
-            while (i < t.fn_param_ids.len()) {
-                if (i > 0) {
-                    result = "${result}, "
+            // Compound types - check element types
+            TypeTag.Pointer => {
+                return self.typesEqual(a.element_type_id, b.element_type_id)
+            }
+            TypeTag.Optional => {
+                return self.typesEqual(a.element_type_id, b.element_type_id)
+            }
+            TypeTag.Slice => {
+                return self.typesEqual(a.element_type_id, b.element_type_id)
+            }
+            TypeTag.Array => {
+                if (a.array_size != b.array_size) {
+                    return false
                 }
-                result = "${result}${typeToString(reg, t.fn_param_ids.get(i))}"
-                i = i + 1
+                return self.typesEqual(a.element_type_id, b.element_type_id)
             }
-            result = "${result})"
-            if (t.fn_return_id >= 0) {
-                result = "${result} ${typeToString(reg, t.fn_return_id)}"
+
+            // Named types - compare by name
+            TypeTag.StructType => {
+                return a.struct_name == b.struct_name
             }
-            return result
+            TypeTag.EnumType => {
+                return a.enum_name == b.enum_name
+            }
+
+            // Function types - compare params and return
+            TypeTag.FunctionType => {
+                if (a.fn_param_ids.len() != b.fn_param_ids.len()) {
+                    return false
+                }
+                for i in 0..a.fn_param_ids.len() {
+                    const pa = a.fn_param_ids.get(i)
+                    const pb = b.fn_param_ids.get(i)
+                    if (not self.typesEqual(pa, pb)) {
+                        return false
+                    }
+                }
+                return self.typesEqual(a.fn_return_id, b.fn_return_id)
+            }
+
+            // Generic types - compare by name and type args
+            TypeTag.GenericType => {
+                if (a.struct_name != b.struct_name) {
+                    return false
+                }
+                if (a.generic_arg_ids.len() != b.generic_arg_ids.len()) {
+                    return false
+                }
+                for i in 0..a.generic_arg_ids.len() {
+                    if (not self.typesEqual(a.generic_arg_ids.get(i), b.generic_arg_ids.get(i))) {
+                        return false
+                    }
+                }
+                return true
+            }
+
+            // Generic params - compare by name
+            TypeTag.GenericParam => {
+                return a.name == b.name
+            }
+
+            // Unresolved types are never equal
+            TypeTag.Unresolved => { return false }
+
+            else => { return false }
+        }
+    }
+
+    fn typeToString(self: TypeRegistry, type_id: i64) string {
+        if (type_id < 0) {
+            return "<null>"
         }
 
-        // Generic types - build name from base + type args
-        TypeTag.GenericType => {
-            var result = t.struct_name
-            if (t.generic_arg_ids.len() > 0) {
-                result = "${result}["
-                var i: i64 = 0
-                while (i < t.generic_arg_ids.len()) {
+        const t = self.getType(type_id)
+
+        // Use the precomputed name if available
+        if (t.name != "") {
+            return t.name
+        }
+
+        switch (t.tag) {
+            TypeTag.Void => { return "void" }
+            TypeTag.Bool => { return "bool" }
+            TypeTag.I8 => { return "i8" }
+            TypeTag.I16 => { return "i16" }
+            TypeTag.I32 => { return "i32" }
+            TypeTag.I64 => { return "i64" }
+            TypeTag.U8 => { return "u8" }
+            TypeTag.U16 => { return "u16" }
+            TypeTag.U32 => { return "u32" }
+            TypeTag.U64 => { return "u64" }
+            TypeTag.F32 => { return "f32" }
+            TypeTag.F64 => { return "f64" }
+            TypeTag.StringType => { return "string" }
+            TypeTag.Char => { return "char" }
+            TypeTag.Never => { return "!" }
+            TypeTag.Any => { return "any" }
+            TypeTag.ErrorType => { return "<error>" }
+            TypeTag.Unresolved => { return "<unresolved>" }
+
+            TypeTag.Pointer => {
+                return "*${self.typeToString(t.element_type_id)}"
+            }
+            TypeTag.Optional => {
+                return "?${self.typeToString(t.element_type_id)}"
+            }
+            TypeTag.Slice => {
+                return "[]${self.typeToString(t.element_type_id)}"
+            }
+            TypeTag.Array => {
+                return "[${t.array_size}]${self.typeToString(t.element_type_id)}"
+            }
+
+            TypeTag.StructType => { return t.struct_name }
+            TypeTag.EnumType => { return t.enum_name }
+
+            TypeTag.FunctionType => {
+                var result = "fn("
+                for i in 0..t.fn_param_ids.len() {
                     if (i > 0) {
                         result = "${result}, "
                     }
-                    result = "${result}${typeToString(reg, t.generic_arg_ids.get(i))}"
-                    i = i + 1
+                    result = "${result}${self.typeToString(t.fn_param_ids.get(i))}"
                 }
-                result = "${result}]"
+                result = "${result})"
+                if (t.fn_return_id >= 0) {
+                    result = "${result} ${self.typeToString(t.fn_return_id)}"
+                }
+                return result
             }
-            return result
+
+            TypeTag.GenericType => {
+                var result = t.struct_name
+                if (t.generic_arg_ids.len() > 0) {
+                    result = "${result}["
+                    for i in 0..t.generic_arg_ids.len() {
+                        if (i > 0) {
+                            result = "${result}, "
+                        }
+                        result = "${result}${self.typeToString(t.generic_arg_ids.get(i))}"
+                    }
+                    result = "${result}]"
+                }
+                return result
+            }
+
+            TypeTag.GenericParam => { return t.name }
+
+            else => { return "<unknown>" }
+        }
+    }
+
+    fn isAssignableTo(self: TypeRegistry, from_id: i64, to_id: i64) bool {
+        // Same type is always assignable
+        if (self.typesEqual(from_id, to_id)) {
+            return true
         }
 
-        // Generic param - just the param name
-        TypeTag.GenericParam => { return t.name }
+        // Handle null types
+        if (from_id < 0 or to_id < 0) {
+            return false
+        }
 
-        TypeTag.Unresolved => { return "<unresolved>" }
+        const from = self.getType(from_id)
+        const to = self.getType(to_id)
+
+        // Error type is assignable to anything (to allow error recovery)
+        if (from.tag == TypeTag.ErrorType or to.tag == TypeTag.ErrorType) {
+            return true
+        }
+
+        // Any type accepts anything
+        if (to.tag == TypeTag.Any) {
+            return true
+        }
+
+        // Never type can be assigned to anything
+        if (from.tag == TypeTag.Never) {
+            return true
+        }
+
+        // Null (void) can be assigned to optional types
+        if (from.tag == TypeTag.Void and to.tag == TypeTag.Optional) {
+            return true
+        }
+
+        // T can be assigned to ?T
+        if (to.tag == TypeTag.Optional and to.element_type_id >= 0) {
+            if (self.typesEqual(from_id, to.element_type_id)) {
+                return true
+            }
+        }
+
+        // Integer widening: smaller to larger signed
+        if (from.isInteger() and to.isInteger()) {
+            // Allow implicit widening (i8 -> i16 -> i32 -> i64)
+            if (from.tag == TypeTag.I32 and to.tag == TypeTag.I64) {
+                return true
+            }
+            if (from.tag == TypeTag.I16 and (to.tag == TypeTag.I32 or to.tag == TypeTag.I64)) {
+                return true
+            }
+            if (from.tag == TypeTag.I8 and (to.tag == TypeTag.I16 or to.tag == TypeTag.I32 or to.tag == TypeTag.I64)) {
+                return true
+            }
+        }
+
+        return false
     }
-    return "<unknown>"
 }
 
 // =============================================================================
-// Type Compatibility
+// Legacy Compatibility (to be removed after all callers updated)
 // =============================================================================
 
-// Check if 'from' can be implicitly converted to 'to'
+fn newTypeRegistry() TypeRegistry {
+    return TypeRegistry.init()
+}
+
+fn regAddPrimitiveType(reg: TypeRegistry, tag: TypeTag, name: string) i64 {
+    return reg.addPrimitiveType(tag, name)
+}
+
+fn regGetType(reg: TypeRegistry, id: i64) TypeInfo {
+    return reg.getType(id)
+}
+
+fn regAddPointerType(reg: TypeRegistry, inner_id: i64) i64 {
+    return reg.addPointerType(inner_id)
+}
+
+fn regAddOptionalType(reg: TypeRegistry, inner_id: i64) i64 {
+    return reg.addOptionalType(inner_id)
+}
+
+fn regAddArrayType(reg: TypeRegistry, inner_id: i64, size: i64) i64 {
+    return reg.addArrayType(inner_id, size)
+}
+
+fn regAddSliceType(reg: TypeRegistry, inner_id: i64) i64 {
+    return reg.addSliceType(inner_id)
+}
+
+fn regAddStructType(reg: TypeRegistry, name: string) i64 {
+    return reg.addStructType(name)
+}
+
+fn regAddEnumType(reg: TypeRegistry, name: string) i64 {
+    return reg.addEnumType(name)
+}
+
+fn regAddFunctionType(reg: TypeRegistry, param_ids: List<i64>, return_id: i64) i64 {
+    return reg.addFunctionType(param_ids, return_id)
+}
+
+fn regAddGenericType(reg: TypeRegistry, name: string, params: List<string>) i64 {
+    return reg.addGenericType(name, params)
+}
+
+fn regAddGenericInstance(reg: TypeRegistry, base_name: string, arg_ids: List<i64>) i64 {
+    return reg.addGenericInstance(base_name, arg_ids)
+}
+
+fn regAddTypeParam(reg: TypeRegistry, name: string) i64 {
+    return reg.addTypeParam(name)
+}
+
+fn isGenericType(t: TypeInfo) bool {
+    return t.isGeneric()
+}
+
+fn isGenericInstance(t: TypeInfo) bool {
+    return t.isGenericInstance()
+}
+
+fn isNumericType(t: TypeInfo) bool {
+    return t.isNumeric()
+}
+
+fn isIntegerType(t: TypeInfo) bool {
+    return t.isInteger()
+}
+
+fn isFloatType(t: TypeInfo) bool {
+    return t.isFloat()
+}
+
+fn isSignedType(t: TypeInfo) bool {
+    return t.isSigned()
+}
+
+fn isPrimitiveType(t: TypeInfo) bool {
+    return t.isPrimitive()
+}
+
+fn isErrorType(t: TypeInfo) bool {
+    return t.isError()
+}
+
+fn isErrorTypeId(reg: TypeRegistry, id: i64) bool {
+    return reg.isErrorTypeId(id)
+}
+
+fn typesEqualById(reg: TypeRegistry, a_id: i64, b_id: i64) bool {
+    return reg.typesEqual(a_id, b_id)
+}
+
+fn typeToString(reg: TypeRegistry, type_id: i64) string {
+    return reg.typeToString(type_id)
+}
+
 fn isAssignableToById(reg: TypeRegistry, from_id: i64, to_id: i64) bool {
-    // Same type is always assignable
-    if (typesEqualById(reg, from_id, to_id)) {
-        return true
-    }
-
-    // Handle null types
-    if (from_id < 0 or to_id < 0) {
-        return false
-    }
-
-    const from = regGetType(reg, from_id)
-    const to = regGetType(reg, to_id)
-
-    // Error type is assignable to anything (to allow error recovery)
-    if (from.tag == TypeTag.ErrorType or to.tag == TypeTag.ErrorType) {
-        return true
-    }
-
-    // Any type accepts anything
-    if (to.tag == TypeTag.Any) {
-        return true
-    }
-
-    // Never type can be assigned to anything
-    if (from.tag == TypeTag.Never) {
-        return true
-    }
-
-    // Null (void) can be assigned to optional types
-    if (from.tag == TypeTag.Void and to.tag == TypeTag.Optional) {
-        return true
-    }
-
-    // T can be assigned to ?T
-    if (to.tag == TypeTag.Optional and to.element_type_id >= 0) {
-        if (typesEqualById(reg, from_id, to.element_type_id)) {
-            return true
-        }
-    }
-
-    // Integer widening: smaller to larger signed
-    if (isIntegerType(from) and isIntegerType(to)) {
-        // Allow implicit widening (i8 -> i16 -> i32 -> i64)
-        if (from.tag == TypeTag.I32 and to.tag == TypeTag.I64) {
-            return true
-        }
-        if (from.tag == TypeTag.I16 and (to.tag == TypeTag.I32 or to.tag == TypeTag.I64)) {
-            return true
-        }
-        if (from.tag == TypeTag.I8 and (to.tag == TypeTag.I16 or to.tag == TypeTag.I32 or to.tag == TypeTag.I64)) {
-            return true
-        }
-    }
-
-    return false
+    return reg.isAssignableTo(from_id, to_id)
 }

@@ -1,0 +1,9 @@
+{
+  "name": "compiler",
+  "version": "0.1.0",
+  "mainEntry": "",
+  "buildTime": 1767830802,
+  "modules": [
+  ],
+  "dependencies": []
+}

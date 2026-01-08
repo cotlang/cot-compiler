@@ -1,0 +1,2027 @@
+// Bootstrap Compiler Driver
+// Stage 4 of the cot-compiler bootstrap plan
+//
+// Usage: cot run bootstrap/main.cbo <input.cot> [-o output.cbo]
+//
+// Pipeline: Source -> Lexer -> Parser -> (Type Check) -> (IR Lower) -> (Emit) -> .cbo
+
+// Import compiler modules
+// Note: These are compiled separately and linked at runtime
+// For now, we include the source directly
+
+// ============================================================================
+// Token Types (from token.cot)
+// ============================================================================
+
+enum TokenType {
+    // Literals
+    IntegerLiteral,
+    DecimalLiteral,
+    StringLiteral,
+    HexLiteral,
+    BinaryLiteral,
+
+    // Identifiers and keywords
+    Identifier,
+
+    // Keywords
+    KwFn,
+    KwVar,
+    KwConst,
+    KwReturn,
+    KwIf,
+    KwElse,
+    KwWhile,
+    KwFor,
+    KwIn,
+    KwBreak,
+    KwContinue,
+    KwStruct,
+    KwEnum,
+    KwImpl,
+    KwTrait,
+    KwImport,
+    KwPub,
+    KwTrue,
+    KwFalse,
+    KwNull,
+    KwSwitch,
+    KwLoop,
+    KwDefer,
+    KwTry,
+    KwCatch,
+    KwThrow,
+    KwTest,
+    KwAnd,
+    KwOr,
+    KwNot,
+    KwAs,
+    KwIs,
+    KwNew,
+    KwSelf,
+    KwUnion,
+    KwType,
+    KwComptime,
+    KwView,
+
+    // Operators
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Equal,
+    EqualEqual,
+    Bang,
+    BangEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Ampersand,
+    Pipe,
+    Caret,
+    Tilde,
+    LessLess,
+    GreaterGreater,
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    Arrow,
+    FatArrow,
+    QuestionQuestion,
+    QuestionDot,
+    DotDot,
+    DotDotEqual,
+
+    // Delimiters
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    LeftBracket,
+    RightBracket,
+    Comma,
+    Dot,
+    Colon,
+    Semicolon,
+    Question,
+    At,
+    Hash,
+
+    // String interpolation
+    StringInterpStart,
+    StringInterpEnd,
+    StringContent,
+
+    // Special
+    Eof,
+    Invalid,
+}
+
+// ============================================================================
+// Token
+// ============================================================================
+
+struct Span {
+    start: i64,
+    end: i64,
+}
+
+struct Token {
+    token_type: TokenType,
+    lexeme: string,
+    line: i64,
+    column: i64,
+    span: Span,
+}
+
+// ============================================================================
+// Lexer
+// ============================================================================
+
+struct Lexer {
+    source: string,
+    start: i64,
+    current: i64,
+    line: i64,
+    column: i64,
+    start_column: i64,
+    in_interp_string: bool,
+    interp_brace_depth: i64,
+}
+
+impl Lexer {
+    fn create(source: string) Lexer {
+        return Lexer{
+            .source = source,
+            .start = 0,
+            .current = 0,
+            .line = 1,
+            .column = 1,
+            .start_column = 1,
+            .in_interp_string = false,
+            .interp_brace_depth = 0,
+        }
+    }
+
+    fn isAtEnd(self: *Lexer) bool {
+        return self.current >= len(self.source)
+    }
+
+    fn advance(self: *Lexer) string {
+        if (self.isAtEnd()) {
+            return ""
+        }
+        var ch: string = self.source[self.current..self.current + 1]
+        self.current = self.current + 1
+        if (ch == "\n") {
+            self.line = self.line + 1
+            self.column = 1
+        } else {
+            self.column = self.column + 1
+        }
+        return ch
+    }
+
+    fn peek(self: *Lexer) string {
+        if (self.isAtEnd()) {
+            return ""
+        }
+        return self.source[self.current..self.current + 1]
+    }
+
+    fn peekNext(self: *Lexer) string {
+        if (self.current + 1 >= len(self.source)) {
+            return ""
+        }
+        return self.source[self.current + 1..self.current + 2]
+    }
+
+    fn match(self: *Lexer, expected: string) bool {
+        if (self.isAtEnd()) {
+            return false
+        }
+        if (self.peek() != expected) {
+            return false
+        }
+        self.advance()
+        return true
+    }
+
+    fn skipWhitespace(self: *Lexer) {
+        while (!self.isAtEnd()) {
+            var ch: string = self.peek()
+            if (ch == " " or ch == "\t" or ch == "\r" or ch == "\n") {
+                self.advance()
+            } else if (ch == "/") {
+                if (self.peekNext() == "/") {
+                    // Line comment
+                    while (!self.isAtEnd() and self.peek() != "\n") {
+                        self.advance()
+                    }
+                } else if (self.peekNext() == "*") {
+                    // Block comment
+                    self.advance()
+                    self.advance()
+                    while (!self.isAtEnd()) {
+                        if (self.peek() == "*" and self.peekNext() == "/") {
+                            self.advance()
+                            self.advance()
+                            break
+                        }
+                        self.advance()
+                    }
+                } else {
+                    return
+                }
+            } else {
+                return
+            }
+        }
+    }
+
+    fn currentLexeme(self: *Lexer) string {
+        return self.source[self.start..self.current]
+    }
+
+    fn makeToken(self: *Lexer, token_type: TokenType) Token {
+        return Token{
+            .token_type = token_type,
+            .lexeme = self.currentLexeme(),
+            .line = self.line,
+            .column = self.start_column,
+            .span = Span{ .start = self.start, .end = self.current },
+        }
+    }
+
+    fn errorToken(self: *Lexer, message: string) Token {
+        return Token{
+            .token_type = TokenType.Invalid,
+            .lexeme = message,
+            .line = self.line,
+            .column = self.start_column,
+            .span = Span{ .start = self.start, .end = self.current },
+        }
+    }
+
+    fn scanToken(self: *Lexer) Token {
+        self.skipWhitespace()
+        self.start = self.current
+        self.start_column = self.column
+
+        if (self.isAtEnd()) {
+            return self.makeToken(TokenType.Eof)
+        }
+
+        var ch: string = self.advance()
+
+        // Identifiers and keywords
+        if (isAlpha(ch)) {
+            while (isAlphaNumeric(self.peek())) {
+                self.advance()
+            }
+            return self.makeToken(identifierType(self.currentLexeme()))
+        }
+
+        // Numbers
+        if (isDigit(ch)) {
+            // Check for hex/binary
+            if (ch == "0" and self.peek() == "x") {
+                self.advance()
+                while (isHexDigit(self.peek())) {
+                    self.advance()
+                }
+                return self.makeToken(TokenType.HexLiteral)
+            }
+            if (ch == "0" and self.peek() == "b") {
+                self.advance()
+                while (self.peek() == "0" or self.peek() == "1") {
+                    self.advance()
+                }
+                return self.makeToken(TokenType.BinaryLiteral)
+            }
+            // Regular number
+            while (isDigit(self.peek())) {
+                self.advance()
+            }
+            if (self.peek() == "." and isDigit(self.peekNext())) {
+                self.advance()
+                while (isDigit(self.peek())) {
+                    self.advance()
+                }
+                return self.makeToken(TokenType.DecimalLiteral)
+            }
+            return self.makeToken(TokenType.IntegerLiteral)
+        }
+
+        // String literals
+        if (ch == "\"") {
+            while (!self.isAtEnd() and self.peek() != "\"") {
+                if (self.peek() == "\\") {
+                    self.advance()
+                }
+                self.advance()
+            }
+            if (self.isAtEnd()) {
+                return self.errorToken("Unterminated string")
+            }
+            self.advance()
+            return self.makeToken(TokenType.StringLiteral)
+        }
+
+        // Operators and delimiters
+        switch (ch) {
+            "(" => { return self.makeToken(TokenType.LeftParen) }
+            ")" => { return self.makeToken(TokenType.RightParen) }
+            "{" => { return self.makeToken(TokenType.LeftBrace) }
+            "}" => { return self.makeToken(TokenType.RightBrace) }
+            "[" => { return self.makeToken(TokenType.LeftBracket) }
+            "]" => { return self.makeToken(TokenType.RightBracket) }
+            "," => { return self.makeToken(TokenType.Comma) }
+            ";" => { return self.makeToken(TokenType.Semicolon) }
+            ":" => { return self.makeToken(TokenType.Colon) }
+            "@" => { return self.makeToken(TokenType.At) }
+            "#" => { return self.makeToken(TokenType.Hash) }
+            "~" => { return self.makeToken(TokenType.Tilde) }
+            "." => {
+                if (self.match(".")) {
+                    if (self.match("=")) {
+                        return self.makeToken(TokenType.DotDotEqual)
+                    }
+                    return self.makeToken(TokenType.DotDot)
+                }
+                return self.makeToken(TokenType.Dot)
+            }
+            "+" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.PlusEqual)
+                }
+                return self.makeToken(TokenType.Plus)
+            }
+            "-" => {
+                if (self.match(">")) {
+                    return self.makeToken(TokenType.Arrow)
+                }
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.MinusEqual)
+                }
+                return self.makeToken(TokenType.Minus)
+            }
+            "*" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.StarEqual)
+                }
+                return self.makeToken(TokenType.Star)
+            }
+            "/" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.SlashEqual)
+                }
+                return self.makeToken(TokenType.Slash)
+            }
+            "%" => { return self.makeToken(TokenType.Percent) }
+            "!" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.BangEqual)
+                }
+                return self.makeToken(TokenType.Bang)
+            }
+            "=" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.EqualEqual)
+                }
+                if (self.match(">")) {
+                    return self.makeToken(TokenType.FatArrow)
+                }
+                return self.makeToken(TokenType.Equal)
+            }
+            "<" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.LessEqual)
+                }
+                if (self.match("<")) {
+                    return self.makeToken(TokenType.LessLess)
+                }
+                return self.makeToken(TokenType.Less)
+            }
+            ">" => {
+                if (self.match("=")) {
+                    return self.makeToken(TokenType.GreaterEqual)
+                }
+                if (self.match(">")) {
+                    return self.makeToken(TokenType.GreaterGreater)
+                }
+                return self.makeToken(TokenType.Greater)
+            }
+            "&" => { return self.makeToken(TokenType.Ampersand) }
+            "|" => { return self.makeToken(TokenType.Pipe) }
+            "^" => { return self.makeToken(TokenType.Caret) }
+            "?" => {
+                if (self.match("?")) {
+                    return self.makeToken(TokenType.QuestionQuestion)
+                }
+                if (self.match(".")) {
+                    return self.makeToken(TokenType.QuestionDot)
+                }
+                return self.makeToken(TokenType.Question)
+            }
+            else => {
+                return self.errorToken("Unexpected character")
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+fn isDigit(ch: string) bool {
+    return ch >= "0" and ch <= "9"
+}
+
+fn isAlpha(ch: string) bool {
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+}
+
+fn isAlphaNumeric(ch: string) bool {
+    return isAlpha(ch) or isDigit(ch)
+}
+
+fn isHexDigit(ch: string) bool {
+    return isDigit(ch) or (ch >= "a" and ch <= "f") or (ch >= "A" and ch <= "F")
+}
+
+fn identifierType(text: string) TokenType {
+    switch (text) {
+        "fn" => { return TokenType.KwFn }
+        "var" => { return TokenType.KwVar }
+        "const" => { return TokenType.KwConst }
+        "return" => { return TokenType.KwReturn }
+        "if" => { return TokenType.KwIf }
+        "else" => { return TokenType.KwElse }
+        "while" => { return TokenType.KwWhile }
+        "for" => { return TokenType.KwFor }
+        "in" => { return TokenType.KwIn }
+        "break" => { return TokenType.KwBreak }
+        "continue" => { return TokenType.KwContinue }
+        "struct" => { return TokenType.KwStruct }
+        "enum" => { return TokenType.KwEnum }
+        "impl" => { return TokenType.KwImpl }
+        "trait" => { return TokenType.KwTrait }
+        "import" => { return TokenType.KwImport }
+        "pub" => { return TokenType.KwPub }
+        "true" => { return TokenType.KwTrue }
+        "false" => { return TokenType.KwFalse }
+        "null" => { return TokenType.KwNull }
+        "switch" => { return TokenType.KwSwitch }
+        "loop" => { return TokenType.KwLoop }
+        "defer" => { return TokenType.KwDefer }
+        "try" => { return TokenType.KwTry }
+        "catch" => { return TokenType.KwCatch }
+        "throw" => { return TokenType.KwThrow }
+        "test" => { return TokenType.KwTest }
+        "and" => { return TokenType.KwAnd }
+        "or" => { return TokenType.KwOr }
+        "not" => { return TokenType.KwNot }
+        "as" => { return TokenType.KwAs }
+        "is" => { return TokenType.KwIs }
+        "new" => { return TokenType.KwNew }
+        "self" => { return TokenType.KwSelf }
+        "union" => { return TokenType.KwUnion }
+        "type" => { return TokenType.KwType }
+        "comptime" => { return TokenType.KwComptime }
+        "view" => { return TokenType.KwView }
+        else => { return TokenType.Identifier }
+    }
+}
+
+// ============================================================================
+// AST Node Types
+// ============================================================================
+
+enum ExprKind {
+    IntLiteral,
+    DecLiteral,
+    StrLiteral,
+    BoolLiteral,
+    NullLiteral,
+    IdentifierExpr,
+    BinaryExpr,
+    UnaryExpr,
+    CallExpr,
+    FieldExpr,
+    IndexExpr,
+    StructInitExpr,
+    ArrayInitExpr,
+}
+
+enum StmtKind {
+    ExpressionStmt,
+    VarDecl,
+    ConstDecl,
+    ReturnStmt,
+    IfStmt,
+    WhileStmt,
+    ForStmt,
+    LoopStmt,
+    BlockStmt,
+    FunctionDecl,
+    StructDecl,
+    EnumDecl,
+    ImplDecl,
+    ImportStmt,
+    BreakStmt,
+    ContinueStmt,
+    SwitchStmt,
+}
+
+enum TypeKind {
+    Named,
+    Pointer,
+    Optional,
+    Array,
+    Slice,
+    Function,
+    Generic,
+}
+
+// ============================================================================
+// AST Node Structs
+// ============================================================================
+
+struct SourceLoc {
+    line: i64,
+    column: i64,
+    start: i64,
+    end: i64,
+}
+
+impl SourceLoc {
+    fn fromToken(tok: Token) SourceLoc {
+        return SourceLoc{
+            .line = tok.line,
+            .column = tok.column,
+            .start = tok.span.start,
+            .end = tok.span.end,
+        }
+    }
+
+    fn zero() SourceLoc {
+        return SourceLoc{ .line = 0, .column = 0, .start = 0, .end = 0 }
+    }
+}
+
+// Type reference node
+struct TypeRef {
+    kind: TypeKind,
+    loc: SourceLoc,
+    name: string,
+    inner: ?*TypeRef,
+    array_size: i64,
+}
+
+// Expression node (simplified)
+struct Expr {
+    kind: ExprKind,
+    loc: SourceLoc,
+    int_value: i64,
+    str_value: string,
+    bool_value: bool,
+    name: string,
+    op: TokenType,
+    left: ?*Expr,
+    right: ?*Expr,
+    operand: ?*Expr,
+    callee: ?*Expr,
+    args: []*Expr,
+    object: ?*Expr,
+    field_name: string,
+    index: ?*Expr,
+}
+
+// Statement node (simplified)
+struct Stmt {
+    kind: StmtKind,
+    loc: SourceLoc,
+    expr: ?*Expr,
+    var_name: string,
+    var_type: ?*TypeRef,
+    var_init: ?*Expr,
+    var_mutable: bool,
+    return_value: ?*Expr,
+    if_cond: ?*Expr,
+    if_then: ?*Stmt,
+    if_else: ?*Stmt,
+    while_cond: ?*Expr,
+    while_body: ?*Stmt,
+    for_var: string,
+    for_iter: ?*Expr,
+    for_body: ?*Stmt,
+    block_stmts: []*Stmt,
+    fn_name: string,
+    fn_params: []Param,
+    fn_return_type: ?*TypeRef,
+    fn_body: ?*Stmt,
+    fn_public: bool,
+    struct_name: string,
+    struct_fields: []Field,
+    enum_name: string,
+    enum_variants: []EnumVariant,
+    impl_type: ?*TypeRef,
+    impl_trait: ?*TypeRef,
+    impl_methods: []*Stmt,
+    import_path: string,
+    switch_expr: ?*Expr,
+    switch_arms: []SwitchArm,
+    loop_body: ?*Stmt,
+}
+
+// Supporting structs
+struct Param {
+    name: string,
+    param_type: ?*TypeRef,
+    loc: SourceLoc,
+}
+
+struct Field {
+    name: string,
+    field_type: ?*TypeRef,
+    loc: SourceLoc,
+}
+
+struct EnumVariant {
+    name: string,
+    value: ?*Expr,
+    loc: SourceLoc,
+}
+
+struct SwitchArm {
+    pattern: ?*Expr,
+    body: ?*Expr,
+    is_default: bool,
+    loc: SourceLoc,
+}
+
+struct FieldInit {
+    name: string,
+    value: ?*Expr,
+    loc: SourceLoc,
+}
+
+// Module - top-level container
+struct Module {
+    statements: List<*Stmt>,
+    has_errors: bool,
+}
+
+impl Module {
+    fn init() Module {
+        var stmts: List<*Stmt> = new List<*Stmt>
+        return Module{ .statements = stmts, .has_errors = false }
+    }
+}
+
+// ============================================================================
+// Precedence Levels
+// ============================================================================
+
+enum Precedence {
+    PrecNone,
+    PrecAssignment,
+    PrecOr,
+    PrecAnd,
+    PrecEquality,
+    PrecComparison,
+    PrecTerm,
+    PrecFactor,
+    PrecUnary,
+    PrecCall,
+    PrecPrimary,
+}
+
+fn precToInt(p: Precedence) i64 {
+    switch (p) {
+        Precedence.PrecNone => { return 0 }
+        Precedence.PrecAssignment => { return 1 }
+        Precedence.PrecOr => { return 2 }
+        Precedence.PrecAnd => { return 3 }
+        Precedence.PrecEquality => { return 4 }
+        Precedence.PrecComparison => { return 5 }
+        Precedence.PrecTerm => { return 6 }
+        Precedence.PrecFactor => { return 7 }
+        Precedence.PrecUnary => { return 8 }
+        Precedence.PrecCall => { return 9 }
+        Precedence.PrecPrimary => { return 10 }
+    }
+    return 0
+}
+
+fn intToPrec(i: i64) Precedence {
+    switch (i) {
+        0 => { return Precedence.PrecNone }
+        1 => { return Precedence.PrecAssignment }
+        2 => { return Precedence.PrecOr }
+        3 => { return Precedence.PrecAnd }
+        4 => { return Precedence.PrecEquality }
+        5 => { return Precedence.PrecComparison }
+        6 => { return Precedence.PrecTerm }
+        7 => { return Precedence.PrecFactor }
+        8 => { return Precedence.PrecUnary }
+        9 => { return Precedence.PrecCall }
+    }
+    return Precedence.PrecPrimary
+}
+
+fn getInfixPrecedence(token_type: TokenType) Precedence {
+    switch (token_type) {
+        TokenType.Equal => { return Precedence.PrecAssignment }
+        TokenType.KwOr => { return Precedence.PrecOr }
+        TokenType.KwAnd => { return Precedence.PrecAnd }
+        TokenType.EqualEqual => { return Precedence.PrecEquality }
+        TokenType.BangEqual => { return Precedence.PrecEquality }
+        TokenType.Less => { return Precedence.PrecComparison }
+        TokenType.LessEqual => { return Precedence.PrecComparison }
+        TokenType.Greater => { return Precedence.PrecComparison }
+        TokenType.GreaterEqual => { return Precedence.PrecComparison }
+        TokenType.Plus => { return Precedence.PrecTerm }
+        TokenType.Minus => { return Precedence.PrecTerm }
+        TokenType.Star => { return Precedence.PrecFactor }
+        TokenType.Slash => { return Precedence.PrecFactor }
+        TokenType.Percent => { return Precedence.PrecFactor }
+        TokenType.LeftParen => { return Precedence.PrecCall }
+        TokenType.LeftBracket => { return Precedence.PrecCall }
+        TokenType.Dot => { return Precedence.PrecCall }
+    }
+    return Precedence.PrecNone
+}
+
+// ============================================================================
+// Expression Constructors
+// ============================================================================
+
+fn makeDefaultExpr(kind: ExprKind, loc: SourceLoc) *Expr {
+    var empty_exprs: []*Expr = []
+    return new Expr{
+        .kind = kind,
+        .loc = loc,
+        .int_value = 0,
+        .str_value = "",
+        .bool_value = false,
+        .name = "",
+        .op = TokenType.Invalid,
+        .left = null,
+        .right = null,
+        .operand = null,
+        .callee = null,
+        .args = empty_exprs,
+        .object = null,
+        .field_name = "",
+        .index = null,
+    }
+}
+
+fn makeIntExpr(value: i64, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.IntLiteral, loc)
+    e.int_value = value
+    return e
+}
+
+fn makeStrExpr(value: string, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.StrLiteral, loc)
+    e.str_value = value
+    return e
+}
+
+fn makeBoolExpr(value: bool, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.BoolLiteral, loc)
+    e.bool_value = value
+    return e
+}
+
+fn makeNullExpr(loc: SourceLoc) *Expr {
+    return makeDefaultExpr(ExprKind.NullLiteral, loc)
+}
+
+fn makeIdentExpr(name: string, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.IdentifierExpr, loc)
+    e.name = name
+    return e
+}
+
+fn makeUnaryExpr(op: TokenType, operand: *Expr, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.UnaryExpr, loc)
+    e.op = op
+    e.operand = operand
+    return e
+}
+
+fn makeBinaryExpr(op: TokenType, left: *Expr, right: *Expr, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.BinaryExpr, loc)
+    e.op = op
+    e.left = left
+    e.right = right
+    return e
+}
+
+fn makeCallExpr(callee: *Expr, args: []*Expr, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.CallExpr, loc)
+    e.callee = callee
+    e.args = args
+    return e
+}
+
+fn makeFieldExpr(object: *Expr, field_name: string, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.FieldExpr, loc)
+    e.object = object
+    e.field_name = field_name
+    return e
+}
+
+fn makeIndexExpr(object: *Expr, index: *Expr, loc: SourceLoc) *Expr {
+    var e: *Expr = makeDefaultExpr(ExprKind.IndexExpr, loc)
+    e.object = object
+    e.index = index
+    return e
+}
+
+// ============================================================================
+// Statement Constructors
+// ============================================================================
+
+fn makeDefaultStmt(kind: StmtKind, loc: SourceLoc) *Stmt {
+    var empty_stmts: []*Stmt = []
+    var empty_params: []Param = []
+    var empty_fields: []Field = []
+    var empty_variants: []EnumVariant = []
+    var empty_arms: []SwitchArm = []
+
+    return new Stmt{
+        .kind = kind,
+        .loc = loc,
+        .expr = null,
+        .var_name = "",
+        .var_type = null,
+        .var_init = null,
+        .var_mutable = false,
+        .return_value = null,
+        .if_cond = null,
+        .if_then = null,
+        .if_else = null,
+        .while_cond = null,
+        .while_body = null,
+        .for_var = "",
+        .for_iter = null,
+        .for_body = null,
+        .block_stmts = empty_stmts,
+        .fn_name = "",
+        .fn_params = empty_params,
+        .fn_return_type = null,
+        .fn_body = null,
+        .fn_public = false,
+        .struct_name = "",
+        .struct_fields = empty_fields,
+        .enum_name = "",
+        .enum_variants = empty_variants,
+        .impl_type = null,
+        .impl_trait = null,
+        .impl_methods = empty_stmts,
+        .import_path = "",
+        .switch_expr = null,
+        .switch_arms = empty_arms,
+        .loop_body = null,
+    }
+}
+
+fn makeExprStmt(expr: *Expr, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.ExpressionStmt, loc)
+    s.expr = expr
+    return s
+}
+
+fn makeVarDeclStmt(name: string, mutable: bool, var_type: ?*TypeRef, var_init: ?*Expr, loc: SourceLoc) *Stmt {
+    var kind: StmtKind = StmtKind.VarDecl
+    if (!mutable) {
+        kind = StmtKind.ConstDecl
+    }
+    var s: *Stmt = makeDefaultStmt(kind, loc)
+    s.var_name = name
+    s.var_mutable = mutable
+    s.var_type = var_type
+    s.var_init = var_init
+    return s
+}
+
+fn makeReturnStmt(return_value: ?*Expr, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.ReturnStmt, loc)
+    s.return_value = return_value
+    return s
+}
+
+fn makeIfStmt(cond: *Expr, then_branch: *Stmt, else_branch: ?*Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.IfStmt, loc)
+    s.if_cond = cond
+    s.if_then = then_branch
+    s.if_else = else_branch
+    return s
+}
+
+fn makeWhileStmt(cond: *Expr, body: *Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.WhileStmt, loc)
+    s.while_cond = cond
+    s.while_body = body
+    return s
+}
+
+fn makeForStmt(var_name: string, iter: *Expr, body: *Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.ForStmt, loc)
+    s.for_var = var_name
+    s.for_iter = iter
+    s.for_body = body
+    return s
+}
+
+fn makeBlockStmt(stmts: []*Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.BlockStmt, loc)
+    s.block_stmts = stmts
+    return s
+}
+
+fn makeLoopStmt(body: *Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.LoopStmt, loc)
+    s.loop_body = body
+    return s
+}
+
+fn makeBreakStmt(loc: SourceLoc) *Stmt {
+    return makeDefaultStmt(StmtKind.BreakStmt, loc)
+}
+
+fn makeContinueStmt(loc: SourceLoc) *Stmt {
+    return makeDefaultStmt(StmtKind.ContinueStmt, loc)
+}
+
+fn makeFunctionDeclStmt(name: string, params: []Param, return_type: ?*TypeRef, body: ?*Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.FunctionDecl, loc)
+    s.fn_name = name
+    s.fn_params = params
+    s.fn_return_type = return_type
+    s.fn_body = body
+    return s
+}
+
+fn makeStructDeclStmt(name: string, fields: []Field, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.StructDecl, loc)
+    s.struct_name = name
+    s.struct_fields = fields
+    return s
+}
+
+fn makeEnumDeclStmt(name: string, variants: []EnumVariant, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.EnumDecl, loc)
+    s.enum_name = name
+    s.enum_variants = variants
+    return s
+}
+
+fn makeImplDeclStmt(impl_type: *TypeRef, trait_type: ?*TypeRef, methods: []*Stmt, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.ImplDecl, loc)
+    s.impl_type = impl_type
+    s.impl_trait = trait_type
+    s.impl_methods = methods
+    return s
+}
+
+fn makeImportStmt(path: string, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.ImportStmt, loc)
+    s.import_path = path
+    return s
+}
+
+fn makeSwitchStmt(switch_expr: *Expr, arms: []SwitchArm, loc: SourceLoc) *Stmt {
+    var s: *Stmt = makeDefaultStmt(StmtKind.SwitchStmt, loc)
+    s.switch_expr = switch_expr
+    s.switch_arms = arms
+    return s
+}
+
+// ============================================================================
+// TypeRef Constructors
+// ============================================================================
+
+fn makeDefaultTypeRef(kind: TypeKind, loc: SourceLoc) *TypeRef {
+    return new TypeRef{
+        .kind = kind,
+        .loc = loc,
+        .name = "",
+        .inner = null,
+        .array_size = 0,
+    }
+}
+
+fn makeNamedTypeRef(name: string, loc: SourceLoc) *TypeRef {
+    var t: *TypeRef = makeDefaultTypeRef(TypeKind.Named, loc)
+    t.name = name
+    return t
+}
+
+fn makePointerTypeRef(inner: *TypeRef, loc: SourceLoc) *TypeRef {
+    var t: *TypeRef = makeDefaultTypeRef(TypeKind.Pointer, loc)
+    t.inner = inner
+    return t
+}
+
+fn makeOptionalTypeRef(inner: *TypeRef, loc: SourceLoc) *TypeRef {
+    var t: *TypeRef = makeDefaultTypeRef(TypeKind.Optional, loc)
+    t.inner = inner
+    return t
+}
+
+fn makeArrayTypeRef(inner: *TypeRef, size: i64, loc: SourceLoc) *TypeRef {
+    var t: *TypeRef = makeDefaultTypeRef(TypeKind.Array, loc)
+    t.inner = inner
+    t.array_size = size
+    return t
+}
+
+fn makeSliceTypeRef(inner: *TypeRef, loc: SourceLoc) *TypeRef {
+    var t: *TypeRef = makeDefaultTypeRef(TypeKind.Slice, loc)
+    t.inner = inner
+    return t
+}
+
+// ============================================================================
+// Parser
+// ============================================================================
+
+struct Parser {
+    lexer: Lexer,
+    current: Token,
+    previous: Token,
+    had_error: bool,
+    panic_mode: bool,
+}
+
+impl Parser {
+    fn create(source: string) Parser {
+        var lex: Lexer = Lexer.create(source)
+        var first_token: Token = lex.scanToken()
+        return Parser{
+            .lexer = lex,
+            .current = first_token,
+            .previous = first_token,
+            .had_error = false,
+            .panic_mode = false,
+        }
+    }
+
+    fn advance(self: *Parser) {
+        self.previous = self.current
+        while (true) {
+            self.current = self.lexer.scanToken()
+            if (self.current.token_type != TokenType.Invalid) {
+                break
+            }
+            self.errorAtCurrent(self.current.lexeme)
+        }
+    }
+
+    fn check(self: *Parser, token_type: TokenType) bool {
+        return self.current.token_type == token_type
+    }
+
+    fn match(self: *Parser, token_type: TokenType) bool {
+        if (!self.check(token_type)) {
+            return false
+        }
+        self.advance()
+        return true
+    }
+
+    fn consume(self: *Parser, token_type: TokenType, message: string) {
+        if (self.current.token_type == token_type) {
+            self.advance()
+            return
+        }
+        self.errorAtCurrent(message)
+    }
+
+    fn isAtEnd(self: *Parser) bool {
+        return self.current.token_type == TokenType.Eof
+    }
+
+    fn peek(self: *Parser) TokenType {
+        return self.current.token_type
+    }
+
+    // Error handling
+    fn errorAt(self: *Parser, token: Token, message: string) {
+        if (self.panic_mode) {
+            return
+        }
+        self.panic_mode = true
+        self.had_error = true
+        println("[line ${token.line}] Error at '${token.lexeme}': ${message}")
+    }
+
+    fn error(self: *Parser, message: string) {
+        self.errorAt(self.previous, message)
+    }
+
+    fn errorAtCurrent(self: *Parser, message: string) {
+        self.errorAt(self.current, message)
+    }
+
+    fn synchronize(self: *Parser) {
+        self.panic_mode = false
+        while (!self.isAtEnd()) {
+            if (self.previous.token_type == TokenType.Semicolon) {
+                return
+            }
+            switch (self.current.token_type) {
+                TokenType.KwFn => { return }
+                TokenType.KwStruct => { return }
+                TokenType.KwEnum => { return }
+                TokenType.KwVar => { return }
+                TokenType.KwConst => { return }
+                TokenType.KwIf => { return }
+                TokenType.KwWhile => { return }
+                TokenType.KwFor => { return }
+                TokenType.KwReturn => { return }
+                TokenType.KwImport => { return }
+                TokenType.KwImpl => { return }
+            }
+            self.advance()
+        }
+    }
+
+    // ========================================================================
+    // Expression Parsing (Pratt Parser)
+    // ========================================================================
+
+    fn parsePrimaryExpr(self: *Parser) *Expr {
+        var token: Token = self.current
+        var loc: SourceLoc = SourceLoc.fromToken(token)
+
+        switch (token.token_type) {
+            TokenType.IntegerLiteral => {
+                self.advance()
+                return makeIntExpr(parseInt(token.lexeme), loc)
+            }
+            TokenType.HexLiteral => {
+                self.advance()
+                return makeIntExpr(parseInt(token.lexeme), loc)
+            }
+            TokenType.BinaryLiteral => {
+                self.advance()
+                return makeIntExpr(parseInt(token.lexeme), loc)
+            }
+            TokenType.StringLiteral => {
+                self.advance()
+                return makeStrExpr(token.lexeme, loc)
+            }
+            TokenType.KwTrue => {
+                self.advance()
+                return makeBoolExpr(true, loc)
+            }
+            TokenType.KwFalse => {
+                self.advance()
+                return makeBoolExpr(false, loc)
+            }
+            TokenType.KwNull => {
+                self.advance()
+                return makeNullExpr(loc)
+            }
+            TokenType.Identifier => {
+                var name: string = token.lexeme
+                self.advance()
+                return makeIdentExpr(name, loc)
+            }
+            TokenType.LeftParen => {
+                self.advance()
+                var inner: *Expr = self.parseExpr()
+                self.consume(TokenType.RightParen, "Expected ')' after expression")
+                return inner
+            }
+            TokenType.Minus => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Minus, operand, loc)
+            }
+            TokenType.Bang => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Bang, operand, loc)
+            }
+            TokenType.Ampersand => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Ampersand, operand, loc)
+            }
+        }
+
+        self.errorAtCurrent("Expected expression")
+        return makeNullExpr(loc)
+    }
+
+    fn parseExpr(self: *Parser) *Expr {
+        return self.parseExprPrec(Precedence.PrecAssignment)
+    }
+
+    fn parseExprPrec(self: *Parser, min_prec: Precedence) *Expr {
+        var left: *Expr = self.parsePrimaryExpr()
+
+        while (true) {
+            if (self.isAtEnd()) {
+                break
+            }
+
+            var loc: SourceLoc = SourceLoc.fromToken(self.current)
+
+            // Handle postfix operators at PrecCall level
+            if (precToInt(min_prec) <= precToInt(Precedence.PrecCall)) {
+                if (self.current.token_type == TokenType.LeftParen) {
+                    left = self.parseCallExpr(left, loc)
+                    continue
+                }
+                if (self.current.token_type == TokenType.Dot) {
+                    left = self.parseFieldExpr(left, loc)
+                    continue
+                }
+                if (self.current.token_type == TokenType.LeftBracket) {
+                    left = self.parseIndexExpr(left, loc)
+                    continue
+                }
+            }
+
+            // Handle binary infix operators
+            var op_prec: Precedence = getInfixPrecedence(self.current.token_type)
+            if (precToInt(op_prec) < precToInt(min_prec)) {
+                break
+            }
+
+            var op_token: Token = self.current
+            self.advance()
+
+            var next_prec: Precedence = op_prec
+            if (op_prec != Precedence.PrecAssignment) {
+                next_prec = intToPrec(precToInt(op_prec) + 1)
+            }
+            var right: *Expr = self.parseExprPrec(next_prec)
+
+            left = makeBinaryExpr(op_token.token_type, left, right, loc)
+        }
+
+        return left
+    }
+
+    fn parseCallExpr(self: *Parser, callee: *Expr, loc: SourceLoc) *Expr {
+        self.advance()  // consume '('
+        var args: List<*Expr> = new List<*Expr>
+        while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+            if (args.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between arguments")
+            }
+            var arg: *Expr = self.parseExpr()
+            args.push(arg)
+        }
+        self.consume(TokenType.RightParen, "Expected ')' after arguments")
+        return makeCallExpr(callee, args.to_slice(), loc)
+    }
+
+    fn parseFieldExpr(self: *Parser, object: *Expr, loc: SourceLoc) *Expr {
+        self.advance()  // consume '.'
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected field name after '.'")
+            return makeNullExpr(loc)
+        }
+        var field_name: string = self.current.lexeme
+        self.advance()
+        return makeFieldExpr(object, field_name, loc)
+    }
+
+    fn parseIndexExpr(self: *Parser, object: *Expr, loc: SourceLoc) *Expr {
+        self.advance()  // consume '['
+        var index: *Expr = self.parseExpr()
+        self.consume(TokenType.RightBracket, "Expected ']' after index")
+        return makeIndexExpr(object, index, loc)
+    }
+
+    // ========================================================================
+    // Type Parsing
+    // ========================================================================
+
+    fn parseType(self: *Parser) *TypeRef {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+
+        // Pointer type: *T
+        if (self.check(TokenType.Star)) {
+            self.advance()
+            var inner: *TypeRef = self.parseType()
+            return makePointerTypeRef(inner, loc)
+        }
+
+        // Optional type: ?T
+        if (self.check(TokenType.Question)) {
+            self.advance()
+            var inner: *TypeRef = self.parseType()
+            return makeOptionalTypeRef(inner, loc)
+        }
+
+        // Array or slice type: [N]T or []T
+        if (self.check(TokenType.LeftBracket)) {
+            self.advance()
+            if (self.check(TokenType.RightBracket)) {
+                self.advance()
+                var elem: *TypeRef = self.parseType()
+                return makeSliceTypeRef(elem, loc)
+            } else {
+                var size: i64 = 0
+                if (self.check(TokenType.IntegerLiteral)) {
+                    size = parseInt(self.current.lexeme)
+                    self.advance()
+                } else {
+                    self.errorAtCurrent("Expected array size")
+                }
+                self.consume(TokenType.RightBracket, "Expected ']' after array size")
+                var elem: *TypeRef = self.parseType()
+                return makeArrayTypeRef(elem, size, loc)
+            }
+        }
+
+        // Named type
+        if (self.check(TokenType.Identifier)) {
+            var name: string = self.current.lexeme
+            self.advance()
+            return makeNamedTypeRef(name, loc)
+        }
+
+        self.errorAtCurrent("Expected type")
+        return makeNamedTypeRef("void", loc)
+    }
+
+    // ========================================================================
+    // Statement Parsing
+    // ========================================================================
+
+    fn parseStatement(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+
+        switch (self.current.token_type) {
+            TokenType.KwFn => { return self.parseFunctionDecl() }
+            TokenType.KwStruct => { return self.parseStructDecl() }
+            TokenType.KwEnum => { return self.parseEnumDecl() }
+            TokenType.KwImpl => { return self.parseImplDecl() }
+            TokenType.KwImport => { return self.parseImportStmt() }
+            TokenType.KwVar => { return self.parseVarDecl() }
+            TokenType.KwConst => { return self.parseConstDecl() }
+            TokenType.KwReturn => { return self.parseReturnStmt() }
+            TokenType.KwIf => { return self.parseIfStmt() }
+            TokenType.KwWhile => { return self.parseWhileStmt() }
+            TokenType.KwFor => { return self.parseForStmt() }
+            TokenType.KwLoop => { return self.parseLoopStmt() }
+            TokenType.KwSwitch => { return self.parseSwitchStmt() }
+            TokenType.KwBreak => {
+                self.advance()
+                return makeBreakStmt(loc)
+            }
+            TokenType.KwContinue => {
+                self.advance()
+                return makeContinueStmt(loc)
+            }
+            TokenType.LeftBrace => { return self.parseBlock() }
+        }
+
+        // Default: expression statement
+        return self.parseExpressionStmt()
+    }
+
+    fn parseVarDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwVar, "Expected 'var'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected variable name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        var var_type: ?*TypeRef = null
+        if (self.match(TokenType.Colon)) {
+            var_type = self.parseType()
+        }
+
+        var var_init: ?*Expr = null
+        if (self.match(TokenType.Equal)) {
+            var_init = self.parseExpr()
+        }
+
+        return makeVarDeclStmt(name, true, var_type, var_init, loc)
+    }
+
+    fn parseConstDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwConst, "Expected 'const'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected constant name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        var const_type: ?*TypeRef = null
+        if (self.match(TokenType.Colon)) {
+            const_type = self.parseType()
+        }
+
+        self.consume(TokenType.Equal, "Expected '=' after constant name")
+        var init_expr: *Expr = self.parseExpr()
+
+        return makeVarDeclStmt(name, false, const_type, init_expr, loc)
+    }
+
+    fn parseReturnStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwReturn, "Expected 'return'")
+
+        if (self.check(TokenType.RightBrace) or self.check(TokenType.Semicolon) or self.isAtEnd()) {
+            return makeReturnStmt(null, loc)
+        }
+
+        var value: *Expr = self.parseExpr()
+        return makeReturnStmt(value, loc)
+    }
+
+    fn parseIfStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwIf, "Expected 'if'")
+
+        self.consume(TokenType.LeftParen, "Expected '(' after 'if'")
+        var cond: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after if condition")
+
+        var then_branch: *Stmt = self.parseBlock()
+
+        var else_branch: ?*Stmt = null
+        if (self.match(TokenType.KwElse)) {
+            if (self.check(TokenType.KwIf)) {
+                else_branch = self.parseIfStmt()
+            } else {
+                else_branch = self.parseBlock()
+            }
+        }
+
+        return makeIfStmt(cond, then_branch, else_branch, loc)
+    }
+
+    fn parseWhileStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwWhile, "Expected 'while'")
+
+        self.consume(TokenType.LeftParen, "Expected '(' after 'while'")
+        var cond: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after while condition")
+
+        var body: *Stmt = self.parseBlock()
+        return makeWhileStmt(cond, body, loc)
+    }
+
+    fn parseForStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwFor, "Expected 'for'")
+
+        self.consume(TokenType.LeftParen, "Expected '(' after 'for'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected loop variable name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var var_name: string = self.current.lexeme
+        self.advance()
+
+        self.consume(TokenType.KwIn, "Expected 'in' after loop variable")
+        var iter: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after for clause")
+
+        var body: *Stmt = self.parseBlock()
+        return makeForStmt(var_name, iter, body, loc)
+    }
+
+    fn parseLoopStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwLoop, "Expected 'loop'")
+        var body: *Stmt = self.parseBlock()
+        return makeLoopStmt(body, loc)
+    }
+
+    fn parseSwitchStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwSwitch, "Expected 'switch'")
+
+        self.consume(TokenType.LeftParen, "Expected '(' after 'switch'")
+        var switch_expr: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after switch expression")
+
+        self.consume(TokenType.LeftBrace, "Expected '{' before switch arms")
+
+        var arms: List<SwitchArm> = new List<SwitchArm>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            var arm_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            var pattern: *Expr = self.parseExpr()
+            self.consume(TokenType.FatArrow, "Expected '=>' after pattern")
+
+            // Body
+            var body: *Expr = makeNullExpr(arm_loc)
+            if (self.check(TokenType.LeftBrace)) {
+                // Block body - parse and wrap statements
+                var block_stmt: *Stmt = self.parseBlock()
+                body = makeNullExpr(arm_loc)  // Simplified: use null for block bodies
+            } else {
+                body = self.parseExpr()
+            }
+
+            arms.push(SwitchArm{
+                .pattern = pattern,
+                .body = body,
+                .is_default = false,
+                .loc = arm_loc,
+            })
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after switch arms")
+        return makeSwitchStmt(switch_expr, arms.to_slice(), loc)
+    }
+
+    fn parseBlock(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.LeftBrace, "Expected '{'")
+
+        var stmts: List<*Stmt> = new List<*Stmt>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            var stmt: *Stmt = self.parseStatement()
+            stmts.push(stmt)
+            self.match(TokenType.Semicolon)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after block")
+        return makeBlockStmt(stmts.to_slice(), loc)
+    }
+
+    fn parseExpressionStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        var expr: *Expr = self.parseExpr()
+        self.match(TokenType.Semicolon)
+        return makeExprStmt(expr, loc)
+    }
+
+    // ========================================================================
+    // Declaration Parsing
+    // ========================================================================
+
+    fn parseFunctionDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwFn, "Expected 'fn'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected function name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        self.consume(TokenType.LeftParen, "Expected '(' after function name")
+
+        var params: List<Param> = new List<Param>
+        while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+            if (params.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between parameters")
+            }
+
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected parameter name")
+                break
+            }
+            var param_name: string = self.current.lexeme
+            var param_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            self.consume(TokenType.Colon, "Expected ':' after parameter name")
+            var param_type: *TypeRef = self.parseType()
+
+            params.push(Param{
+                .name = param_name,
+                .param_type = param_type,
+                .loc = param_loc,
+            })
+        }
+
+        self.consume(TokenType.RightParen, "Expected ')' after parameters")
+
+        var return_type: ?*TypeRef = null
+        if (!self.check(TokenType.LeftBrace)) {
+            return_type = self.parseType()
+        }
+
+        var body: *Stmt = self.parseBlock()
+        return makeFunctionDeclStmt(name, params.to_slice(), return_type, body, loc)
+    }
+
+    fn parseStructDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwStruct, "Expected 'struct'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected struct name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        self.consume(TokenType.LeftBrace, "Expected '{' after struct name")
+
+        var fields: List<Field> = new List<Field>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected field name")
+                break
+            }
+            var field_name: string = self.current.lexeme
+            var field_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            self.consume(TokenType.Colon, "Expected ':' after field name")
+            var field_type: *TypeRef = self.parseType()
+
+            fields.push(Field{
+                .name = field_name,
+                .field_type = field_type,
+                .loc = field_loc,
+            })
+
+            self.match(TokenType.Comma)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after struct fields")
+        return makeStructDeclStmt(name, fields.to_slice(), loc)
+    }
+
+    fn parseEnumDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwEnum, "Expected 'enum'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected enum name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        self.consume(TokenType.LeftBrace, "Expected '{' after enum name")
+
+        var variants: List<EnumVariant> = new List<EnumVariant>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected variant name")
+                break
+            }
+            var variant_name: string = self.current.lexeme
+            var variant_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            var variant_value: ?*Expr = null
+            if (self.match(TokenType.Equal)) {
+                variant_value = self.parseExpr()
+            }
+
+            variants.push(EnumVariant{
+                .name = variant_name,
+                .value = variant_value,
+                .loc = variant_loc,
+            })
+
+            self.match(TokenType.Comma)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after enum variants")
+        return makeEnumDeclStmt(name, variants.to_slice(), loc)
+    }
+
+    fn parseImplDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwImpl, "Expected 'impl'")
+
+        var impl_type: *TypeRef = self.parseType()
+
+        var trait_type: ?*TypeRef = null
+        if (self.match(TokenType.KwFor)) {
+            trait_type = impl_type
+            impl_type = self.parseType()
+        }
+
+        self.consume(TokenType.LeftBrace, "Expected '{' after impl type")
+
+        var methods: List<*Stmt> = new List<*Stmt>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            if (self.check(TokenType.KwFn)) {
+                var method: *Stmt = self.parseFunctionDecl()
+                methods.push(method)
+            } else {
+                self.errorAtCurrent("Expected 'fn' in impl block")
+                self.advance()
+            }
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after impl methods")
+        return makeImplDeclStmt(impl_type, trait_type, methods.to_slice(), loc)
+    }
+
+    fn parseImportStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwImport, "Expected 'import'")
+
+        if (!self.check(TokenType.StringLiteral)) {
+            self.errorAtCurrent("Expected module path string")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var path: string = self.current.lexeme
+        self.advance()
+
+        return makeImportStmt(path, loc)
+    }
+
+    // ========================================================================
+    // Module Parsing
+    // ========================================================================
+
+    fn parseModule(self: *Parser) Module {
+        var mod: Module = Module.init()
+
+        while (!self.isAtEnd()) {
+            var stmt: *Stmt = self.parseTopLevel()
+            mod.statements.push(stmt)
+
+            if (self.panic_mode) {
+                self.synchronize()
+            }
+        }
+
+        mod.has_errors = self.had_error
+        return mod
+    }
+
+    fn parseTopLevel(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        var tok_type: TokenType = self.peek()
+
+        switch (tok_type) {
+            TokenType.KwFn => { return self.parseFunctionDecl() }
+            TokenType.KwStruct => { return self.parseStructDecl() }
+            TokenType.KwEnum => { return self.parseEnumDecl() }
+            TokenType.KwImpl => { return self.parseImplDecl() }
+            TokenType.KwConst => { return self.parseConstDecl() }
+            TokenType.KwVar => { return self.parseVarDecl() }
+            TokenType.KwImport => { return self.parseImportStmt() }
+        }
+
+        self.errorAtCurrent("Expected 'fn', 'struct', 'enum', 'impl', 'const', 'var', or 'import' at top level")
+        self.advance()
+        return makeExprStmt(makeNullExpr(loc), loc)
+    }
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+fn parseInt(s: string) i64 {
+    if (len(s) > 2 and s[0..2] == "0x") {
+        return parseHex(s[2..len(s)])
+    }
+    if (len(s) > 2 and s[0..2] == "0b") {
+        return parseBinary(s[2..len(s)])
+    }
+    return parseDecimal(s)
+}
+
+fn parseDecimal(s: string) i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while (i < len(s)) {
+        var ch: string = s[i..i+1]
+        if (ch >= "0" and ch <= "9") {
+            result = result * 10 + (ascii(ch) - ascii("0"))
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn parseHex(s: string) i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while (i < len(s)) {
+        var ch: string = s[i..i+1]
+        result = result * 16
+        if (ch >= "0" and ch <= "9") {
+            result = result + (ascii(ch) - ascii("0"))
+        } else if (ch >= "a" and ch <= "f") {
+            result = result + (ascii(ch) - ascii("a") + 10)
+        } else if (ch >= "A" and ch <= "F") {
+            result = result + (ascii(ch) - ascii("A") + 10)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn parseBinary(s: string) i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while (i < len(s)) {
+        var ch: string = s[i..i+1]
+        result = result * 2
+        if (ch == "1") {
+            result = result + 1
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// ============================================================================
+// AST Pretty Printing
+// ============================================================================
+
+fn printExpr(expr: *Expr, indent: i64) {
+    var pad: string = ""
+    var i: i64 = 0
+    while (i < indent) {
+        pad = pad + "  "
+        i = i + 1
+    }
+
+    switch (expr.kind) {
+        ExprKind.IntLiteral => {
+            println("${pad}Int: ${expr.int_value}")
+        }
+        ExprKind.StrLiteral => {
+            println("${pad}Str: ${expr.str_value}")
+        }
+        ExprKind.BoolLiteral => {
+            if (expr.bool_value) {
+                println("${pad}Bool: true")
+            } else {
+                println("${pad}Bool: false")
+            }
+        }
+        ExprKind.NullLiteral => {
+            println("${pad}Null")
+        }
+        ExprKind.IdentifierExpr => {
+            println("${pad}Ident: ${expr.name}")
+        }
+        ExprKind.BinaryExpr => {
+            println("${pad}Binary:")
+            printExprSimple("(left)", indent + 1)
+            printExprSimple("(right)", indent + 1)
+        }
+        ExprKind.UnaryExpr => {
+            println("${pad}Unary:")
+            printExprSimple("(operand)", indent + 1)
+        }
+        ExprKind.CallExpr => {
+            println("${pad}Call:")
+            printExprSimple("(callee)", indent + 1)
+        }
+        ExprKind.FieldExpr => {
+            println("${pad}Field: ${expr.field_name}")
+        }
+        ExprKind.IndexExpr => {
+            println("${pad}Index:")
+        }
+        else => {
+            println("${pad}Expr")
+        }
+    }
+}
+
+// Helper to print expression with indentation (simplified - just prints kind)
+fn printExprSimple(kind: string, indent: i64) {
+    var pad: string = ""
+    var i: i64 = 0
+    while (i < indent) {
+        pad = pad + "  "
+        i = i + 1
+    }
+    println("${pad}${kind}")
+}
+
+fn printStmt(stmt: *Stmt, indent: i64) {
+    var pad: string = ""
+    var i: i64 = 0
+    while (i < indent) {
+        pad = pad + "  "
+        i = i + 1
+    }
+
+    switch (stmt.kind) {
+        StmtKind.FunctionDecl => {
+            println("${pad}Function: ${stmt.fn_name}")
+            printExprSimple("(body)", indent + 1)
+        }
+        StmtKind.BlockStmt => {
+            println("${pad}Block:")
+            var j: i64 = 0
+            while (j < len(stmt.block_stmts)) {
+                printStmt(stmt.block_stmts[j], indent + 1)
+                j = j + 1
+            }
+        }
+        StmtKind.ReturnStmt => {
+            println("${pad}Return:")
+            printExprSimple("(value)", indent + 1)
+        }
+        StmtKind.VarDecl => {
+            println("${pad}Var: ${stmt.var_name}")
+        }
+        StmtKind.ConstDecl => {
+            println("${pad}Const: ${stmt.var_name}")
+        }
+        StmtKind.IfStmt => {
+            println("${pad}If:")
+        }
+        StmtKind.WhileStmt => {
+            println("${pad}While:")
+        }
+        StmtKind.ForStmt => {
+            println("${pad}For: ${stmt.for_var}")
+        }
+        StmtKind.LoopStmt => {
+            println("${pad}Loop:")
+        }
+        StmtKind.StructDecl => {
+            println("${pad}Struct: ${stmt.struct_name}")
+        }
+        StmtKind.EnumDecl => {
+            println("${pad}Enum: ${stmt.enum_name}")
+        }
+        StmtKind.ImplDecl => {
+            println("${pad}Impl:")
+        }
+        StmtKind.ExpressionStmt => {
+            println("${pad}ExprStmt:")
+            printExprSimple("(expr)", indent + 1)
+        }
+        else => {
+            println("${pad}Stmt")
+        }
+    }
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+fn main() {
+    // Test with a simple program
+    var source: string = "fn main() { return 42 }"
+
+    println("Bootstrap Compiler Driver")
+    println("=========================")
+    println("")
+    println("Input: ${source}")
+    println("")
+
+    // Stage 1: Tokenize
+    println("Stage 1 (Lexer):")
+    var lexer: Lexer = Lexer.create(source)
+    var token_count: i64 = 0
+
+    while (!lexer.isAtEnd()) {
+        var tok: Token = lexer.scanToken()
+        println("  [${tok.line}:${tok.column}] ${tok.lexeme}")
+        token_count = token_count + 1
+        if (tok.token_type == TokenType.Eof) {
+            break
+        }
+    }
+    println("  Total tokens: ${token_count}")
+    println("  Stage 1 (Lexer): OK")
+    println("")
+
+    // Stage 2: Parse
+    println("Stage 2 (Parser):")
+    var parser: Parser = Parser.create(source)
+    var module: Module = parser.parseModule()
+
+    if (module.has_errors) {
+        println("  Parse errors occurred")
+    } else {
+        println("  Parsed ${module.statements.len()} top-level statements")
+        println("  Stage 2 (Parser): OK")
+    }
+}

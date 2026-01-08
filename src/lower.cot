@@ -37,6 +37,9 @@ struct Lowerer {
     // Error tracking
     errors: List<string>,
     had_error: bool,
+
+    // Lambda counter for unique names
+    lambda_counter: i64,
 }
 
 // Scope for tracking local variables during lowering
@@ -45,200 +48,373 @@ struct LowerScope {
     is_loop: bool,              // For break/continue
     loop_exit: i64,             // Exit block for loops
     loop_continue: i64,         // Continue block for loops
+    defers: List<*Expr>,        // Deferred expressions (LIFO)
 }
+
+// =============================================================================
+// Lowerer Implementation
+// =============================================================================
+
+impl Lowerer {
+    // Constructor
+    fn init(ast_types: TypeRegistry) Lowerer {
+        const module = IRModule.init("main")
+        const ir_types = IRTypeRegistry.init()
+        const scopes = new List<LowerScope>
+        const type_map = new Map<i64, i64>
+        const errors = new List<string>
+
+        return Lowerer{
+            .module = module,
+            .ir_types = ir_types,
+            .ast_types = ast_types,
+            .current_func_idx = -1,
+            .current_block = -1,
+            .scopes = scopes,
+            .type_map = type_map,
+            .errors = errors,
+            .had_error = false,
+            .lambda_counter = 0,
+        }
+    }
+
+    // Get current function
+    fn getCurrentFunc(self: Lowerer) IRFunction {
+        return self.module.functions.get(self.current_func_idx)
+    }
+
+    // ==========================================================================
+    // Scope Management
+    // ==========================================================================
+
+    fn enterScope(self: *Lowerer) {
+        const vars = new Map<string, i64>
+        const defers = new List<*Expr>
+        const scope = LowerScope{
+            .vars = vars,
+            .is_loop = false,
+            .loop_exit = -1,
+            .loop_continue = -1,
+            .defers = defers,
+        }
+        self.scopes.push(scope)
+    }
+
+    fn enterLoopScope(self: *Lowerer, exit_block: i64, continue_block: i64) {
+        const vars = new Map<string, i64>
+        const defers = new List<*Expr>
+        const scope = LowerScope{
+            .vars = vars,
+            .is_loop = true,
+            .loop_exit = exit_block,
+            .loop_continue = continue_block,
+            .defers = defers,
+        }
+        self.scopes.push(scope)
+    }
+
+    fn exitScope(self: *Lowerer) {
+        if (self.scopes.len() > 0) {
+            // Emit pending defers in LIFO order before exiting scope
+            self.emitScopeDefers(self.scopes.len() - 1)
+            self.scopes.pop()
+        }
+    }
+
+    // Emit defers for a single scope in LIFO order
+    fn emitScopeDefers(self: *Lowerer, scope_idx: i64) {
+        if (scope_idx < 0 or scope_idx >= self.scopes.len()) {
+            return
+        }
+        const scope = self.scopes.get(scope_idx)
+        // Emit in reverse order (LIFO)
+        var i: i64 = scope.defers.len() - 1
+        while (i >= 0) {
+            const expr = scope.defers.get(i)
+            lowerExpr(self.*, expr.*)
+            i -= 1
+        }
+    }
+
+    // Emit defers for all scopes in LIFO order (for return statements)
+    fn emitAllDefers(self: *Lowerer) {
+        // Start from innermost scope and work outward
+        var i: i64 = self.scopes.len() - 1
+        while (i >= 0) {
+            self.emitScopeDefers(i)
+            i -= 1
+        }
+    }
+
+    // Emit defers for scopes until reaching the loop scope
+    // For break: include_loop = true (emit loop scope defers too)
+    // For continue: include_loop = false (don't emit loop scope defers)
+    fn emitDefersUntilLoop(self: *Lowerer, include_loop: bool) {
+        var i: i64 = self.scopes.len() - 1
+        while (i >= 0) {
+            const scope = self.scopes.get(i)
+            if (scope.is_loop) {
+                if (include_loop) {
+                    self.emitScopeDefers(i)
+                }
+                return
+            }
+            self.emitScopeDefers(i)
+            i -= 1
+        }
+    }
+
+    fn defineVar(self: *Lowerer, name: string, value_id: i64) {
+        if (self.scopes.len() > 0) {
+            const scope = self.scopes.get(self.scopes.len() - 1)
+            scope.vars.set(name, value_id)
+        }
+    }
+
+    fn lookupVar(self: Lowerer, name: string) i64 {
+        var i = self.scopes.len() - 1
+        while (i >= 0) {
+            const scope = self.scopes.get(i)
+            if (scope.vars.has(name)) {
+                return scope.vars.get(name)
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn getLoopExit(self: Lowerer) i64 {
+        var i = self.scopes.len() - 1
+        while (i >= 0) {
+            const scope = self.scopes.get(i)
+            if (scope.is_loop) {
+                return scope.loop_exit
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    fn getLoopContinue(self: Lowerer) i64 {
+        var i = self.scopes.len() - 1
+        while (i >= 0) {
+            const scope = self.scopes.get(i)
+            if (scope.is_loop) {
+                return scope.loop_continue
+            }
+            i = i - 1
+        }
+        return -1
+    }
+
+    // ==========================================================================
+    // Error Handling
+    // ==========================================================================
+
+    fn error(self: *Lowerer, line: i64, message: string) {
+        const err = "Lower error at line ${line}: ${message}"
+        self.errors.push(err)
+        self.had_error = true
+    }
+
+    // ==========================================================================
+    // Enum/Variant Helpers
+    // ==========================================================================
+
+    // Look up an enum type by name, returns type ID or -1 if not found
+    fn lookupEnumType(self: Lowerer, name: string) i64 {
+        for i in 0..self.ast_types.types.len() {
+            const t = self.ast_types.types.get(i)
+            if (t.tag == TypeTag.EnumType and t.enum_name == name) {
+                return i
+            }
+        }
+        return -1
+    }
+
+    // Find a variant in an enum type, returns the variant or null
+    fn findVariant(self: Lowerer, enum_type_id: i64, variant_name: string) ?TypeVariant {
+        if (enum_type_id < 0) {
+            return null
+        }
+        const enum_type = self.ast_types.getType(enum_type_id)
+        for i in 0..enum_type.enum_variants.len() {
+            const v = enum_type.enum_variants.get(i)
+            if (v.name == variant_name) {
+                return v
+            }
+        }
+        return null
+    }
+
+    // ==========================================================================
+    // Type Mapping (AST types to IR types)
+    // ==========================================================================
+
+    fn mapType(self: *Lowerer, ast_type_id: i64) i64 {
+        // Check cache
+        if (self.type_map.has(ast_type_id)) {
+            return self.type_map.get(ast_type_id)
+        }
+
+        const ast_type = self.ast_types.getType(ast_type_id)
+        var ir_type_id: i64 = self.ir_types.error_id
+
+        // Map based on AST type tag
+        switch (ast_type.tag) {
+            TypeTag.Void => { ir_type_id = self.ir_types.void_id }
+            TypeTag.Bool => { ir_type_id = self.ir_types.bool_id }
+            TypeTag.I8 => { ir_type_id = self.ir_types.i8_id }
+            TypeTag.I16 => { ir_type_id = self.ir_types.i16_id }
+            TypeTag.I32 => { ir_type_id = self.ir_types.i32_id }
+            TypeTag.I64 => { ir_type_id = self.ir_types.i64_id }
+            TypeTag.U8 => { ir_type_id = self.ir_types.u8_id }
+            TypeTag.U16 => { ir_type_id = self.ir_types.u16_id }
+            TypeTag.U32 => { ir_type_id = self.ir_types.u32_id }
+            TypeTag.U64 => { ir_type_id = self.ir_types.u64_id }
+            TypeTag.F32 => { ir_type_id = self.ir_types.f32_id }
+            TypeTag.F64 => { ir_type_id = self.ir_types.f64_id }
+            TypeTag.StringType => { ir_type_id = self.ir_types.string_id }
+            TypeTag.Char => { ir_type_id = self.ir_types.char_id }
+            TypeTag.Pointer => {
+                const inner_id = self.mapType(ast_type.element_type_id)
+                ir_type_id = self.ir_types.addPointer(inner_id)
+            }
+            TypeTag.Optional => {
+                const inner_id = self.mapType(ast_type.element_type_id)
+                ir_type_id = self.ir_types.addOptional(inner_id)
+            }
+            TypeTag.Slice => {
+                const inner_id = self.mapType(ast_type.element_type_id)
+                ir_type_id = self.ir_types.addSlice(inner_id)
+            }
+            TypeTag.Array => {
+                const inner_id = self.mapType(ast_type.element_type_id)
+                ir_type_id = self.ir_types.addArray(inner_id, ast_type.array_size)
+            }
+        }
+
+        // Cache the mapping
+        self.type_map.set(ast_type_id, ir_type_id)
+        return ir_type_id
+    }
+
+    // ==========================================================================
+    // IR Building Helpers
+    // ==========================================================================
+
+    fn newValue(self: Lowerer) i64 {
+        if (self.current_func_idx >= 0) {
+            const func = self.getCurrentFunc()
+            return func.newValue()
+        }
+        return -1
+    }
+
+    fn emit(self: Lowerer, inst: IRInst) {
+        if (self.current_func_idx >= 0 and self.current_block >= 0) {
+            const func = self.getCurrentFunc()
+            const block = func.getBlock(self.current_block)
+            block.append(inst)
+        }
+    }
+
+    fn createBlock(self: Lowerer, label: string) i64 {
+        if (self.current_func_idx >= 0) {
+            const func = self.getCurrentFunc()
+            return func.createBlock(label)
+        }
+        return -1
+    }
+
+    fn switchBlock(self: *Lowerer, block_id: i64) {
+        self.current_block = block_id
+    }
+}
+
+// =============================================================================
+// Legacy Compatibility Functions
+// =============================================================================
+// These functions maintain backward compatibility during migration
 
 fn newLowerer(ast_types: TypeRegistry) Lowerer {
-    const module = newIRModule("main")
-    const ir_types = newIRTypeRegistry()
-    const scopes: List<LowerScope> = List.new()
-    const type_map: Map<i64, i64> = Map.new()
-    const errors: List<string> = List.new()
-
-    return Lowerer{
-        .module = module,
-        .ir_types = ir_types,
-        .ast_types = ast_types,
-        .current_func_idx = -1,
-        .current_block = -1,
-        .scopes = scopes,
-        .type_map = type_map,
-        .errors = errors,
-        .had_error = false,
-    }
+    return Lowerer.init(ast_types)
 }
 
-// Helper to get current function
 fn lowerGetCurrentFunc(l: Lowerer) IRFunction {
-    return l.module.functions.get(l.current_func_idx)
+    return l.getCurrentFunc()
 }
 
-// =============================================================================
-// Scope Management
-// =============================================================================
-
-fn lowerEnterScope(l: Lowerer) {
-    const vars: Map<string, i64> = Map.new()
-    const scope = LowerScope{
-        .vars = vars,
-        .is_loop = false,
-        .loop_exit = -1,
-        .loop_continue = -1,
-    }
-    l.scopes.push(scope)
+fn lowerEnterScope(l: *Lowerer) {
+    l.enterScope()
 }
 
-fn lowerEnterLoopScope(l: Lowerer, exit_block: i64, continue_block: i64) {
-    const vars: Map<string, i64> = Map.new()
-    const scope = LowerScope{
-        .vars = vars,
-        .is_loop = true,
-        .loop_exit = exit_block,
-        .loop_continue = continue_block,
-    }
-    l.scopes.push(scope)
+fn lowerEnterLoopScope(l: *Lowerer, exit_block: i64, continue_block: i64) {
+    l.enterLoopScope(exit_block, continue_block)
 }
 
-fn lowerExitScope(l: Lowerer) {
-    if (l.scopes.len() > 0) {
-        l.scopes.pop()
-    }
+fn lowerExitScope(l: *Lowerer) {
+    l.exitScope()
 }
 
-fn lowerDefineVar(l: Lowerer, name: string, value_id: i64) {
-    if (l.scopes.len() > 0) {
-        const scope = l.scopes.get(l.scopes.len() - 1)
-        scope.vars.set(name, value_id)
-    }
+fn lowerEmitScopeDefers(l: *Lowerer, scope_idx: i64) {
+    l.emitScopeDefers(scope_idx)
+}
+
+fn lowerEmitAllDefers(l: *Lowerer) {
+    l.emitAllDefers()
+}
+
+fn lowerEmitDefersUntilLoop(l: *Lowerer, include_loop: bool) {
+    l.emitDefersUntilLoop(include_loop)
+}
+
+fn lowerDefineVar(l: *Lowerer, name: string, value_id: i64) {
+    l.defineVar(name, value_id)
 }
 
 fn lowerLookupVar(l: Lowerer, name: string) i64 {
-    var i = l.scopes.len() - 1
-    while (i >= 0) {
-        const scope = l.scopes.get(i)
-        if (scope.vars.has(name)) {
-            return scope.vars.get(name)
-        }
-        i = i - 1
-    }
-    return -1
+    return l.lookupVar(name)
 }
 
 fn lowerGetLoopExit(l: Lowerer) i64 {
-    var i = l.scopes.len() - 1
-    while (i >= 0) {
-        const scope = l.scopes.get(i)
-        if (scope.is_loop) {
-            return scope.loop_exit
-        }
-        i = i - 1
-    }
-    return -1
+    return l.getLoopExit()
 }
 
 fn lowerGetLoopContinue(l: Lowerer) i64 {
-    var i = l.scopes.len() - 1
-    while (i >= 0) {
-        const scope = l.scopes.get(i)
-        if (scope.is_loop) {
-            return scope.loop_continue
-        }
-        i = i - 1
-    }
-    return -1
+    return l.getLoopContinue()
 }
 
-// =============================================================================
-// Error Handling
-// =============================================================================
-
-fn lowerError(l: Lowerer, line: i64, message: string) {
-    const err = "Lower error at line ${line}: ${message}"
-    l.errors.push(err)
-    l.had_error = true
+fn lowerError(l: *Lowerer, line: i64, message: string) {
+    l.error(line, message)
 }
 
-// =============================================================================
-// Type Mapping (AST types to IR types)
-// =============================================================================
-
-fn lowerMapType(l: Lowerer, ast_type_id: i64) i64 {
-    // Check cache
-    if (l.type_map.has(ast_type_id)) {
-        return l.type_map.get(ast_type_id)
-    }
-
-    const ast_type = regGetType(l.ast_types, ast_type_id)
-    var ir_type_id: i64 = l.ir_types.error_id
-
-    // Map based on AST type tag
-    switch (ast_type.tag) {
-        TypeTag.Void => { ir_type_id = l.ir_types.void_id }
-        TypeTag.Bool => { ir_type_id = l.ir_types.bool_id }
-        TypeTag.I8 => { ir_type_id = l.ir_types.i8_id }
-        TypeTag.I16 => { ir_type_id = l.ir_types.i16_id }
-        TypeTag.I32 => { ir_type_id = l.ir_types.i32_id }
-        TypeTag.I64 => { ir_type_id = l.ir_types.i64_id }
-        TypeTag.U8 => { ir_type_id = l.ir_types.u8_id }
-        TypeTag.U16 => { ir_type_id = l.ir_types.u16_id }
-        TypeTag.U32 => { ir_type_id = l.ir_types.u32_id }
-        TypeTag.U64 => { ir_type_id = l.ir_types.u64_id }
-        TypeTag.F32 => { ir_type_id = l.ir_types.f32_id }
-        TypeTag.F64 => { ir_type_id = l.ir_types.f64_id }
-        TypeTag.StringType => { ir_type_id = l.ir_types.string_id }
-        TypeTag.Char => { ir_type_id = l.ir_types.char_id }
-        TypeTag.Pointer => {
-            const inner_id = lowerMapType(l, ast_type.element_type_id)
-            ir_type_id = irRegAddPointer(l.ir_types, inner_id)
-        }
-        TypeTag.Optional => {
-            const inner_id = lowerMapType(l, ast_type.element_type_id)
-            ir_type_id = irRegAddOptional(l.ir_types, inner_id)
-        }
-        TypeTag.Slice => {
-            const inner_id = lowerMapType(l, ast_type.element_type_id)
-            ir_type_id = irRegAddSlice(l.ir_types, inner_id)
-        }
-        TypeTag.Array => {
-            const inner_id = lowerMapType(l, ast_type.element_type_id)
-            ir_type_id = irRegAddArray(l.ir_types, inner_id, ast_type.array_size)
-        }
-    }
-
-    // Cache the mapping
-    l.type_map.set(ast_type_id, ir_type_id)
-    return ir_type_id
+fn lowerLookupEnumType(l: Lowerer, name: string) i64 {
+    return l.lookupEnumType(name)
 }
 
-// =============================================================================
-// IR Building Helpers
-// =============================================================================
+fn lowerFindVariant(l: Lowerer, enum_type_id: i64, variant_name: string) ?TypeVariant {
+    return l.findVariant(enum_type_id, variant_name)
+}
+
+fn lowerMapType(l: *Lowerer, ast_type_id: i64) i64 {
+    return l.mapType(ast_type_id)
+}
 
 fn lowerNewValue(l: Lowerer) i64 {
-    if (l.current_func_idx >= 0) {
-        const func = lowerGetCurrentFunc(l)
-        return fnNewValue(func)
-    }
-    return -1
+    return l.newValue()
 }
 
 fn lowerEmit(l: Lowerer, inst: IRInst) {
-    if (l.current_func_idx >= 0 and l.current_block >= 0) {
-        const func = lowerGetCurrentFunc(l)
-        const block = fnGetBlock(func, l.current_block)
-        blockAppend(block, inst)
-    }
+    l.emit(inst)
 }
 
 fn lowerCreateBlock(l: Lowerer, label: string) i64 {
-    if (l.current_func_idx >= 0) {
-        const func = lowerGetCurrentFunc(l)
-        return fnCreateBlock(func, label)
-    }
-    return -1
+    return l.createBlock(label)
 }
 
-fn lowerSwitchBlock(l: Lowerer, block_id: i64) {
-    l.current_block = block_id
+fn lowerSwitchBlock(l: *Lowerer, block_id: i64) {
+    l.switchBlock(block_id)
 }
 
 // =============================================================================
@@ -446,7 +622,21 @@ fn lowerUnaryExpr(l: Lowerer, expr: Expr) i64 {
 }
 
 fn lowerCallExpr(l: Lowerer, expr: Expr) i64 {
-    // Get callee name
+    // Check for enum variant construction: EnumName.Variant(args)
+    if (expr.callee != null) {
+        const callee = expr.callee.*
+        if (callee.kind == ExprKind.FieldExpr and callee.object != null) {
+            const obj = callee.object.*
+            if (obj.kind == ExprKind.IdentifierExpr) {
+                const enum_type_id = lowerLookupEnumType(l, obj.name)
+                if (enum_type_id >= 0) {
+                    return lowerEnumVariantConstruct(l, expr, enum_type_id, callee.field_name)
+                }
+            }
+        }
+    }
+
+    // Regular function call
     var callee_name = ""
     if (expr.callee != null) {
         const callee = expr.callee.*
@@ -461,8 +651,7 @@ fn lowerCallExpr(l: Lowerer, expr: Expr) i64 {
     inst.callee = callee_name
     inst.line = expr.loc.line
 
-    // Note: In a full implementation, we'd store arg IDs in a list
-    // For now, we store the first few args in op1_id, op2_id, op3_id
+    // Lower args into op1_id, op2_id, op3_id
     if (len(expr.args) > 0) {
         inst.op1_id = lowerExpr(l, expr.args[0].*)
     }
@@ -477,7 +666,130 @@ fn lowerCallExpr(l: Lowerer, expr: Expr) i64 {
     return result_id
 }
 
+// Lower enum variant construction: EnumName.Variant(payload_args)
+fn lowerEnumVariantConstruct(l: Lowerer, expr: Expr, enum_type_id: i64, variant_name: string) i64 {
+    const maybe_variant = lowerFindVariant(l, enum_type_id, variant_name)
+    if (maybe_variant == null) {
+        lowerError(l, expr.loc.line, "Unknown variant '${variant_name}'")
+        return -1
+    }
+    const variant = maybe_variant.*
+
+    const result_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.VariantConstruct)
+    inst.result_id = result_id
+    inst.int_val = variant.value  // The variant tag
+    inst.line = expr.loc.line
+
+    // Lower payload arguments
+    // Store arg count in field_index, payload values in op1_id, op2_id, op3_id
+    inst.field_index = len(expr.args)
+    if (len(expr.args) > 0) {
+        inst.op1_id = lowerExpr(l, expr.args[0].*)
+    }
+    if (len(expr.args) > 1) {
+        inst.op2_id = lowerExpr(l, expr.args[1].*)
+    }
+    if (len(expr.args) > 2) {
+        inst.op3_id = lowerExpr(l, expr.args[2].*)
+    }
+
+    lowerEmit(l, inst)
+    return result_id
+}
+
+// Check if field expr is an enum variant (no payload), returns variant or null
+fn tryGetEnumVariantField(l: Lowerer, expr: Expr) ?TypeVariant {
+    if (expr.object == null) {
+        return null
+    }
+    const obj = expr.object.*
+    if (obj.kind != ExprKind.IdentifierExpr) {
+        return null
+    }
+    const enum_type_id = lowerLookupEnumType(l, obj.name)
+    if (enum_type_id < 0) {
+        return null
+    }
+    return lowerFindVariant(l, enum_type_id, expr.field_name)
+}
+
+// Result type for variant pattern matching
+struct VariantPatternInfo {
+    is_variant: bool,
+    enum_type_id: i64,
+    variant_tag: i64,
+}
+
+// Check if a switch pattern is an enum variant pattern (with or without payload)
+// Returns VariantPatternInfo with is_variant=true if it is, along with the variant tag
+fn tryGetVariantPattern(l: Lowerer, pattern: Expr) VariantPatternInfo {
+    // Case 1: CallExpr like Option.Some(val) - variant with payload binding
+    if (pattern.kind == ExprKind.CallExpr) {
+        if (pattern.callee != null) {
+            const callee = pattern.callee.*
+            if (callee.kind == ExprKind.FieldExpr and callee.object != null) {
+                const obj = callee.object.*
+                if (obj.kind == ExprKind.IdentifierExpr) {
+                    const enum_type_id = lowerLookupEnumType(l, obj.name)
+                    if (enum_type_id >= 0) {
+                        const maybe_variant = lowerFindVariant(l, enum_type_id, callee.field_name)
+                        if (maybe_variant != null) {
+                            const variant = maybe_variant.*
+                            return VariantPatternInfo{
+                                .is_variant = true,
+                                .enum_type_id = enum_type_id,
+                                .variant_tag = variant.value,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Case 2: FieldExpr like Option.None - variant without payload
+    if (pattern.kind == ExprKind.FieldExpr and pattern.object != null) {
+        const obj = pattern.object.*
+        if (obj.kind == ExprKind.IdentifierExpr) {
+            const enum_type_id = lowerLookupEnumType(l, obj.name)
+            if (enum_type_id >= 0) {
+                const maybe_variant = lowerFindVariant(l, enum_type_id, pattern.field_name)
+                if (maybe_variant != null) {
+                    const variant = maybe_variant.*
+                    return VariantPatternInfo{
+                        .is_variant = true,
+                        .enum_type_id = enum_type_id,
+                        .variant_tag = variant.value,
+                    }
+                }
+            }
+        }
+    }
+
+    return VariantPatternInfo{
+        .is_variant = false,
+        .enum_type_id = -1,
+        .variant_tag = -1,
+    }
+}
+
 fn lowerFieldExpr(l: Lowerer, expr: Expr) i64 {
+    // Check for enum variant without payload: EnumName.Variant
+    const maybe_variant = tryGetEnumVariantField(l, expr)
+    if (maybe_variant != null) {
+        const variant = maybe_variant.*
+        const result_id = lowerNewValue(l)
+        var inst = newIRInst(IROp.VariantConstruct)
+        inst.result_id = result_id
+        inst.int_val = variant.value
+        inst.field_index = 0
+        inst.line = expr.loc.line
+        lowerEmit(l, inst)
+        return result_id
+    }
+
+    // Regular field access
     var obj_id: i64 = -1
     if (expr.object != null) {
         obj_id = lowerExpr(l, expr.object.*)
@@ -606,11 +918,13 @@ fn lowerMethodCallExpr(l: Lowerer, expr: Expr) i64 {
     inst.line = expr.loc.line
 
     // Add remaining arguments
-    if (len(expr.args) > 0) {
-        inst.op2_id = lowerExpr(l, expr.args[0].*)
+    const args = expr.args
+    const arg_count = len(args)
+    if (arg_count > 0) {
+        inst.op2_id = lowerExpr(l, args[0].*)
     }
-    if (len(expr.args) > 1) {
-        inst.op3_id = lowerExpr(l, expr.args[1].*)
+    if (arg_count > 1) {
+        inst.op3_id = lowerExpr(l, args[1].*)
     }
 
     lowerEmit(l, inst)
@@ -728,19 +1042,147 @@ fn lowerSwitchExpr(l: Lowerer, expr: Expr) i64 {
 
     const exit_block = lowerCreateBlock(l, "switch_exit")
 
-    // Allocate result variable
+    // Allocate result variable to store arm values
     const result_alloc = lowerNewValue(l)
     var alloc_inst = newIRInst(IROp.Alloca)
     alloc_inst.result_id = result_alloc
     alloc_inst.line = expr.loc.line
     lowerEmit(l, alloc_inst)
 
-    // Note: For a full implementation, we'd handle arms similar to switch statement
-    // For now, just use the first value as result
+    // Create blocks for each arm
+    var arm_blocks = new List<i64>
+    var i: i64 = 0
+    while (i < len(expr.switch_arms)) {
+        arm_blocks.push(lowerCreateBlock(l, "switch_arm"))
+        i += 1
+    }
+
+    // Find default block
+    var default_block = exit_block
+    i = 0
+    while (i < len(expr.switch_arms)) {
+        if (expr.switch_arms[i].is_default) {
+            default_block = arm_blocks.get(i)
+        }
+        i += 1
+    }
+
+    // Generate comparisons for each arm pattern
+    i = 0
+    while (i < len(expr.switch_arms)) {
+        const arm = expr.switch_arms[i]
+        if (not arm.is_default and arm.pattern != null) {
+            const pattern = arm.pattern.*
+            const variant_info = tryGetVariantPattern(l, pattern)
+
+            var cmp_id: i64 = -1
+
+            if (variant_info.is_variant) {
+                // For variant patterns, extract tag and compare
+                const tag_id = lowerNewValue(l)
+                var tag_inst = newIRInst(IROp.VariantGetTag)
+                tag_inst.result_id = tag_id
+                tag_inst.op1_id = switch_val
+                tag_inst.line = pattern.loc.line
+                lowerEmit(l, tag_inst)
+
+                const tag_const_id = lowerNewValue(l)
+                var const_inst = newIRInst(IROp.IConst)
+                const_inst.result_id = tag_const_id
+                const_inst.int_val = variant_info.variant_tag
+                lowerEmit(l, const_inst)
+
+                cmp_id = lowerNewValue(l)
+                var cmp_inst = newIRInst(IROp.ICmp)
+                cmp_inst.result_id = cmp_id
+                cmp_inst.op1_id = tag_id
+                cmp_inst.op2_id = tag_const_id
+                cmp_inst.cond = CondCode.Eq
+                lowerEmit(l, cmp_inst)
+            } else {
+                // Regular pattern matching
+                const pattern_val = lowerExpr(l, pattern)
+                cmp_id = lowerNewValue(l)
+                var cmp_inst = newIRInst(IROp.ICmp)
+                cmp_inst.result_id = cmp_id
+                cmp_inst.op1_id = switch_val
+                cmp_inst.op2_id = pattern_val
+                cmp_inst.cond = CondCode.Eq
+                lowerEmit(l, cmp_inst)
+            }
+
+            const next_check = lowerCreateBlock(l, "switch_next")
+            var br_inst = newIRInst(IROp.BrIf)
+            br_inst.op1_id = cmp_id
+            br_inst.target_block = arm_blocks.get(i)
+            br_inst.else_block = next_check
+            lowerEmit(l, br_inst)
+
+            lowerSwitchBlock(l, next_check)
+        }
+        i += 1
+    }
+
+    // Jump to default after all comparisons
     var jmp = newIRInst(IROp.Jump)
-    jmp.target_block = exit_block
+    jmp.target_block = default_block
     lowerEmit(l, jmp)
 
+    // Lower each arm body: evaluate expression, store to result, jump to exit
+    i = 0
+    while (i < len(expr.switch_arms)) {
+        const arm = expr.switch_arms[i]
+        lowerSwitchBlock(l, arm_blocks.get(i))
+
+        // Extract payload bindings for variant patterns
+        if (len(arm.binding_names) > 0 and switch_val >= 0) {
+            var j: i64 = 0
+            while (j < len(arm.binding_names)) {
+                const name = arm.binding_names[j]
+
+                // Extract payload value at index j using VariantGetPayload
+                const payload_id = lowerNewValue(l)
+                var extract_inst = newIRInst(IROp.VariantGetPayload)
+                extract_inst.result_id = payload_id
+                extract_inst.op1_id = switch_val
+                extract_inst.field_index = j  // Payload index
+                extract_inst.line = arm.loc.line
+                lowerEmit(l, extract_inst)
+
+                // Bind the extracted value to the variable name in current scope
+                if (l.scopes.len() > 0) {
+                    const scope = l.scopes.get(l.scopes.len() - 1)
+                    scope.vars.set(name, payload_id)
+                }
+
+                j += 1
+            }
+        }
+
+        // Lower the body expression and store result
+        if (arm.body != null) {
+            const body_val = lowerExpr(l, arm.body.*)
+            var store_inst = newIRInst(IROp.Store)
+            store_inst.op1_id = result_alloc
+            store_inst.op2_id = body_val
+            store_inst.line = arm.loc.line
+            lowerEmit(l, store_inst)
+        }
+
+        // Jump to exit if not terminated
+        if (l.current_func_idx >= 0) {
+            const func = lowerGetCurrentFunc(l)
+            const bb = fnGetBlock(func, arm_blocks.get(i))
+            if (not blockIsTerminated(bb)) {
+                var jmp_inst = newIRInst(IROp.Jump)
+                jmp_inst.target_block = exit_block
+                lowerEmit(l, jmp_inst)
+            }
+        }
+        i += 1
+    }
+
+    // Exit block: load and return the result
     lowerSwitchBlock(l, exit_block)
     const result_id = lowerNewValue(l)
     var load_inst = newIRInst(IROp.Load)
@@ -753,18 +1195,316 @@ fn lowerSwitchExpr(l: Lowerer, expr: Expr) i64 {
 }
 
 fn lowerLambdaExpr(l: Lowerer, expr: Expr) i64 {
-    // For lambdas, we create a closure/function reference
-    // For now, create a placeholder value
-    const result_id = lowerNewValue(l)
-    var inst = newIRInst(IROp.IConst)
-    inst.result_id = result_id
-    inst.result_type_id = l.ir_types.i64_id
-    inst.int_val = 0  // Placeholder
-    inst.line = expr.loc.line
-    lowerEmit(l, inst)
+    // Generate unique lambda name
+    const lambda_name = "_lambda_" + str(l.lambda_counter)
+    l.lambda_counter += 1
 
-    // Note: Full lambda support would create a closure struct with captures
-    return result_id
+    // Save current context
+    const saved_func_idx = l.current_func_idx
+    const saved_block = l.current_block
+
+    // Collect parameter names for capture detection
+    var param_names = new Map<string, bool>
+    var i: i64 = 0
+    while (i < len(expr.params)) {
+        const param = expr.params[i]
+        param_names.set(param.name, true)
+        i += 1
+    }
+
+    // Detect free variables in the lambda body
+    // Use parallel lists since Map iteration is complex
+    var capture_names = new List<string>
+    var capture_ids = new List<i64>
+    if (expr.body != null) {
+        collectFreeVariables(l, expr.body.*, param_names, capture_names, capture_ids)
+    }
+
+    // Create the lambda function in the module
+    const func = newIRFunction(lambda_name)
+    l.module.functions.push(func)
+    const lambda_func_idx = l.module.functions.len() - 1
+    l.current_func_idx = lambda_func_idx
+    l.current_block = 0  // Entry block
+
+    // Create entry block
+    var entry_block = newIRBlock(0, "entry")
+    func.blocks.push(entry_block)
+
+    // Push new scope for lambda
+    lowerEnterScope(l)
+
+    // If we have captures, add implicit _closure_env parameter first
+    const has_captures = capture_names.len() > 0
+    if (has_captures) {
+        const env_id = lowerNewValue(l)
+        var env_alloc = newIRInst(IROp.Alloca)
+        env_alloc.result_id = env_id
+        env_alloc.line = expr.loc.line
+        lowerEmit(l, env_alloc)
+        lowerDefineVar(l, "_closure_env", env_id)
+    }
+
+    // Add parameters to scope
+    i = 0
+    while (i < len(expr.params)) {
+        const param = expr.params[i]
+        const param_id = lowerNewValue(l)
+        var alloc_inst = newIRInst(IROp.Alloca)
+        alloc_inst.result_id = param_id
+        alloc_inst.line = expr.loc.line
+        lowerEmit(l, alloc_inst)
+        lowerDefineVar(l, param.name, param_id)
+        i += 1
+    }
+
+    // Lower lambda body (expression form: return the value)
+    if (expr.body != null) {
+        const body_val = lowerExpr(l, expr.body.*)
+        var ret_inst = newIRInst(IROp.Ret)
+        ret_inst.op1_id = body_val
+        ret_inst.line = expr.loc.line
+        lowerEmit(l, ret_inst)
+    } else {
+        // Empty body, return void
+        var ret_inst = newIRInst(IROp.Ret)
+        ret_inst.op1_id = -1
+        ret_inst.line = expr.loc.line
+        lowerEmit(l, ret_inst)
+    }
+
+    // Pop lambda scope
+    lowerExitScope(l)
+
+    // Restore context to outer function
+    l.current_func_idx = saved_func_idx
+    l.current_block = saved_block
+
+    // Now emit code in the outer function to create the closure
+    if (has_captures) {
+        // Create environment map
+        const env_id = lowerNewValue(l)
+        var env_inst = newIRInst(IROp.MapNew)
+        env_inst.result_id = env_id
+        env_inst.line = expr.loc.line
+        lowerEmit(l, env_inst)
+
+        // Store each captured variable in the map
+        var j: i64 = 0
+        while (j < capture_names.len()) {
+            const var_name = capture_names.get(j)
+            const outer_ptr = capture_ids.get(j)
+
+            // Load the value from outer scope
+            const loaded_id = lowerNewValue(l)
+            var load_inst = newIRInst(IROp.Load)
+            load_inst.result_id = loaded_id
+            load_inst.op1_id = outer_ptr
+            load_inst.line = expr.loc.line
+            lowerEmit(l, load_inst)
+
+            // Create key constant
+            const key_id = lowerNewValue(l)
+            var key_inst = newIRInst(IROp.StrConst)
+            key_inst.result_id = key_id
+            key_inst.str_val = var_name
+            key_inst.line = expr.loc.line
+            lowerEmit(l, key_inst)
+
+            // Store in map
+            var set_inst = newIRInst(IROp.MapSet)
+            set_inst.op1_id = env_id
+            set_inst.op2_id = key_id
+            set_inst.op3_id = loaded_id
+            set_inst.line = expr.loc.line
+            lowerEmit(l, set_inst)
+
+            j += 1
+        }
+
+        // Emit MakeClosure with environment
+        const closure_id = lowerNewValue(l)
+        var closure_inst = newIRInst(IROp.MakeClosure)
+        closure_inst.result_id = closure_id
+        closure_inst.callee = lambda_name
+        closure_inst.op1_id = env_id
+        closure_inst.line = expr.loc.line
+        lowerEmit(l, closure_inst)
+
+        return closure_id
+    } else {
+        // No captures - emit MakeClosure with null env
+        const null_id = lowerNewValue(l)
+        var null_inst = newIRInst(IROp.NullConst)
+        null_inst.result_id = null_id
+        null_inst.line = expr.loc.line
+        lowerEmit(l, null_inst)
+
+        const closure_id = lowerNewValue(l)
+        var closure_inst = newIRInst(IROp.MakeClosure)
+        closure_inst.result_id = closure_id
+        closure_inst.callee = lambda_name
+        closure_inst.op1_id = null_id
+        closure_inst.line = expr.loc.line
+        lowerEmit(l, closure_inst)
+
+        return closure_id
+    }
+}
+
+// Collect free variables referenced in an expression that are not in local params
+fn collectFreeVariables(l: Lowerer, expr: Expr, params: Map<string, bool>, capture_names: List<string>, capture_ids: List<i64>) {
+    switch (expr.kind) {
+        ExprKind.IdentifierExpr => {
+            const name = expr.name
+            // Skip if it's a lambda parameter
+            if (params.has(name)) {
+                return
+            }
+            // Check if already captured
+            var k: i64 = 0
+            while (k < capture_names.len()) {
+                if (capture_names.get(k) == name) {
+                    return  // Already captured
+                }
+                k += 1
+            }
+            // Check if it exists in outer scope
+            if (l.scopes.len() > 0) {
+                var i: i64 = l.scopes.len() - 1
+                while (i >= 0) {
+                    const scope = l.scopes.get(i)
+                    if (scope.vars.has(name)) {
+                        // Found in outer scope - it's a capture
+                        capture_names.push(name)
+                        capture_ids.push(scope.vars.get(name))
+                        return
+                    }
+                    i -= 1
+                }
+            }
+        }
+        ExprKind.BinaryExpr => {
+            if (expr.left != null) {
+                collectFreeVariables(l, expr.left.*, params, capture_names, capture_ids)
+            }
+            if (expr.right != null) {
+                collectFreeVariables(l, expr.right.*, params, capture_names, capture_ids)
+            }
+        }
+        ExprKind.UnaryExpr => {
+            if (expr.operand != null) {
+                collectFreeVariables(l, expr.operand.*, params, capture_names, capture_ids)
+            }
+        }
+        ExprKind.CallExpr => {
+            if (expr.callee != null) {
+                collectFreeVariables(l, expr.callee.*, params, capture_names, capture_ids)
+            }
+            var i: i64 = 0
+            while (i < len(expr.args)) {
+                collectFreeVariables(l, expr.args[i].*, params, capture_names, capture_ids)
+                i += 1
+            }
+        }
+        ExprKind.FieldExpr => {
+            if (expr.object != null) {
+                collectFreeVariables(l, expr.object.*, params, capture_names, capture_ids)
+            }
+        }
+        ExprKind.IndexExpr => {
+            if (expr.object != null) {
+                collectFreeVariables(l, expr.object.*, params, capture_names, capture_ids)
+            }
+            if (expr.index != null) {
+                collectFreeVariables(l, expr.index.*, params, capture_names, capture_ids)
+            }
+        }
+        ExprKind.BlockExpr => {
+            // Block expressions can contain statements
+            var i: i64 = 0
+            while (i < len(expr.stmts)) {
+                collectFreeVariablesStmt(l, expr.stmts[i].*, params, capture_names, capture_ids)
+                i += 1
+            }
+            if (expr.result != null) {
+                collectFreeVariables(l, expr.result.*, params, capture_names, capture_ids)
+            }
+        }
+        ExprKind.IfExpr => {
+            if (expr.condition != null) {
+                collectFreeVariables(l, expr.condition.*, params, capture_names, capture_ids)
+            }
+            if (expr.then_branch != null) {
+                collectFreeVariables(l, expr.then_branch.*, params, capture_names, capture_ids)
+            }
+            if (expr.else_branch != null) {
+                collectFreeVariables(l, expr.else_branch.*, params, capture_names, capture_ids)
+            }
+        }
+        else => {
+            // Other expression types don't reference variables
+        }
+    }
+}
+
+// Collect free variables from statements within a lambda body
+fn collectFreeVariablesStmt(l: Lowerer, stmt: Stmt, params: Map<string, bool>, capture_names: List<string>, capture_ids: List<i64>) {
+    switch (stmt.kind) {
+        StmtKind.ExpressionStmt => {
+            if (stmt.expr != null) {
+                collectFreeVariables(l, stmt.expr.*, params, capture_names, capture_ids)
+            }
+        }
+        StmtKind.ReturnStmt => {
+            if (stmt.return_value != null) {
+                collectFreeVariables(l, stmt.return_value.*, params, capture_names, capture_ids)
+            }
+        }
+        StmtKind.VarDecl => {
+            // Add to params so subsequent uses don't count as captures
+            params.set(stmt.var_name, true)
+            if (stmt.var_init != null) {
+                collectFreeVariables(l, stmt.var_init.*, params, capture_names, capture_ids)
+            }
+        }
+        StmtKind.ConstDecl => {
+            // Add to params so subsequent uses don't count as captures
+            params.set(stmt.var_name, true)
+            if (stmt.var_init != null) {
+                collectFreeVariables(l, stmt.var_init.*, params, capture_names, capture_ids)
+            }
+        }
+        StmtKind.IfStmt => {
+            if (stmt.if_cond != null) {
+                collectFreeVariables(l, stmt.if_cond.*, params, capture_names, capture_ids)
+            }
+            if (stmt.if_then != null) {
+                collectFreeVariablesStmt(l, stmt.if_then.*, params, capture_names, capture_ids)
+            }
+            if (stmt.if_else != null) {
+                collectFreeVariablesStmt(l, stmt.if_else.*, params, capture_names, capture_ids)
+            }
+        }
+        StmtKind.WhileStmt => {
+            if (stmt.while_cond != null) {
+                collectFreeVariables(l, stmt.while_cond.*, params, capture_names, capture_ids)
+            }
+            if (stmt.while_body != null) {
+                collectFreeVariablesStmt(l, stmt.while_body.*, params, capture_names, capture_ids)
+            }
+        }
+        StmtKind.BlockStmt => {
+            var i: i64 = 0
+            while (i < len(stmt.block_stmts)) {
+                collectFreeVariablesStmt(l, stmt.block_stmts[i].*, params, capture_names, capture_ids)
+                i += 1
+            }
+        }
+        else => {
+            // Other statement types
+        }
+    }
 }
 
 fn lowerRangeExpr(l: Lowerer, expr: Expr) i64 {
@@ -1034,10 +1774,14 @@ fn lowerVarDecl(l: Lowerer, stmt: Stmt) {
 }
 
 fn lowerReturnStmt(l: Lowerer, stmt: Stmt) {
+    // Evaluate return value first (before defers run)
     var value_id: i64 = -1
     if (stmt.return_value != null) {
         value_id = lowerExpr(l, stmt.return_value.*)
     }
+
+    // Emit all pending defers in LIFO order (innermost scope first)
+    lowerEmitAllDefers(l)
 
     var inst = newIRInst(IROp.Ret)
     inst.op1_id = value_id
@@ -1160,6 +1904,8 @@ fn lowerBlockStmt(l: Lowerer, stmt: Stmt) {
 fn lowerBreakStmt(l: Lowerer, stmt: Stmt) {
     const exit_block = lowerGetLoopExit(l)
     if (exit_block >= 0) {
+        // Emit defers for all scopes including the loop scope
+        lowerEmitDefersUntilLoop(l, true)
         var inst = newIRInst(IROp.Jump)
         inst.target_block = exit_block
         inst.line = stmt.loc.line
@@ -1172,6 +1918,8 @@ fn lowerBreakStmt(l: Lowerer, stmt: Stmt) {
 fn lowerContinueStmt(l: Lowerer, stmt: Stmt) {
     const continue_block = lowerGetLoopContinue(l)
     if (continue_block >= 0) {
+        // Emit defers for nested scopes but not the loop scope itself
+        lowerEmitDefersUntilLoop(l, false)
         var inst = newIRInst(IROp.Jump)
         inst.target_block = continue_block
         inst.line = stmt.loc.line
@@ -1183,20 +1931,142 @@ fn lowerContinueStmt(l: Lowerer, stmt: Stmt) {
 
 fn lowerForStmt(l: Lowerer, stmt: Stmt) {
     // For loops: for (x in iter) { body }
-    // Simplified lowering - treat as while loop over range
+    // Handle both range iteration and list iteration
+
+    // Check if iterating over a range expression
+    if (stmt.for_iter != null) {
+        const iter = stmt.for_iter.*
+        if (iter.kind == ExprKind.RangeExpr) {
+            lowerForRangeStmt(l, stmt)
+            return
+        }
+    }
+
+    // List iteration
+    lowerForListStmt(l, stmt)
+}
+
+// For loop over a range: for (i in 0..10) { body }
+fn lowerForRangeStmt(l: Lowerer, stmt: Stmt) {
+    const range = stmt.for_iter.*
 
     // Create blocks
     const cond_block = lowerCreateBlock(l, "for_cond")
     const body_block = lowerCreateBlock(l, "for_body")
     const exit_block = lowerCreateBlock(l, "for_exit")
 
-    // Lower the iterator and allocate index
+    // Lower start and end values
+    var start_id: i64 = -1
+    var end_id: i64 = -1
+    if (range.range_start != null) {
+        start_id = lowerExpr(l, range.range_start.*)
+    }
+    if (range.range_end != null) {
+        end_id = lowerExpr(l, range.range_end.*)
+    }
+
+    // Allocate loop variable, init to start
+    const var_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.Alloca)
+    inst.result_id = var_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = var_id
+    inst.op2_id = start_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Jump)
+    inst.target_block = cond_block
+    lowerEmit(l, inst)
+
+    // Condition: var < end (or var <= end for inclusive)
+    lowerSwitchBlock(l, cond_block)
+    const cur_val = lowerNewValue(l)
+    inst = newIRInst(IROp.Load)
+    inst.result_id = cur_val
+    inst.op1_id = var_id
+    lowerEmit(l, inst)
+
+    const cmp_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ICmp)
+    inst.result_id = cmp_id
+    inst.op1_id = cur_val
+    inst.op2_id = end_id
+    // Use Sle for inclusive range (..=), Slt for exclusive range (..)
+    if (range.range_inclusive) {
+        inst.cond = CondCode.Sle
+    } else {
+        inst.cond = CondCode.Slt
+    }
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.BrIf)
+    inst.op1_id = cmp_id
+    inst.target_block = body_block
+    inst.else_block = exit_block
+    lowerEmit(l, inst)
+
+    // Body
+    lowerSwitchBlock(l, body_block)
+    lowerEnterLoopScope(l, exit_block, cond_block)
+
+    // Register loop variable
+    lowerDefineVar(l, stmt.for_var, var_id)
+
+    // Lower body
+    if (stmt.for_body != null) {
+        lowerStmt(l, stmt.for_body.*)
+    }
+
+    // Increment: var += 1
+    const cur_val2 = lowerNewValue(l)
+    inst = newIRInst(IROp.Load)
+    inst.result_id = cur_val2
+    inst.op1_id = var_id
+    lowerEmit(l, inst)
+
+    const one_id = lowerNewValue(l)
+    inst = newIRInst(IROp.IConst)
+    inst.result_id = one_id
+    inst.int_val = 1
+    lowerEmit(l, inst)
+
+    const next_val = lowerNewValue(l)
+    inst = newIRInst(IROp.IAdd)
+    inst.result_id = next_val
+    inst.op1_id = cur_val2
+    inst.op2_id = one_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = var_id
+    inst.op2_id = next_val
+    lowerEmit(l, inst)
+
+    // Jump back to condition
+    inst = newIRInst(IROp.Jump)
+    inst.target_block = cond_block
+    lowerEmit(l, inst)
+
+    lowerExitScope(l)
+    lowerSwitchBlock(l, exit_block)
+}
+
+// For loop over a list: for (item in list) { body }
+fn lowerForListStmt(l: Lowerer, stmt: Stmt) {
+    // Create blocks
+    const cond_block = lowerCreateBlock(l, "for_cond")
+    const body_block = lowerCreateBlock(l, "for_body")
+    const exit_block = lowerCreateBlock(l, "for_exit")
+
+    // Lower the iterator
     var iter_id: i64 = -1
     if (stmt.for_iter != null) {
         iter_id = lowerExpr(l, stmt.for_iter.*)
     }
 
-    // Allocate index, init to 0, jump to cond
+    // Allocate index, init to 0
     const idx_id = lowerNewValue(l)
     var inst = newIRInst(IROp.Alloca)
     inst.result_id = idx_id
@@ -1339,7 +2209,7 @@ fn lowerSwitchStmt(l: Lowerer, stmt: Stmt) {
     const exit_block = lowerCreateBlock(l, "switch_exit")
 
     // Create blocks for arms
-    var arm_blocks: List<i64> = List.new()
+    var arm_blocks= new List<i64>
     var i: i64 = 0
     while (i < len(stmt.switch_arms)) {
         arm_blocks.push(lowerCreateBlock(l, "switch_arm"))
@@ -1371,8 +2241,8 @@ fn lowerSwitchStmt(l: Lowerer, stmt: Stmt) {
     // Lower bodies
     i = 0
     while (i < len(stmt.switch_arms)) {
-        lowerSwitchArmBody(l, stmt.switch_arms[i], arm_blocks.get(i), exit_block)
-        i = i + 1
+        lowerSwitchArmBody(l, stmt.switch_arms[i], arm_blocks.get(i), exit_block, switch_val)
+        i += 1
     }
 
     lowerSwitchBlock(l, exit_block)
@@ -1383,31 +2253,90 @@ fn lowerSwitchArm(l: Lowerer, arm: SwitchArm, arm_block: i64, switch_val: i64) {
         return
     }
 
-    var pattern_val: i64 = -1
-    if (arm.pattern != null) {
-        pattern_val = lowerExpr(l, arm.pattern.*)
+    if (arm.pattern == null) {
+        return
     }
 
-    const cmp_id = lowerNewValue(l)
-    var inst = newIRInst(IROp.ICmp)
-    inst.result_id = cmp_id
-    inst.op1_id = switch_val
-    inst.op2_id = pattern_val
-    inst.cond = CondCode.Eq
-    lowerEmit(l, inst)
+    const pattern = arm.pattern.*
+    const variant_info = tryGetVariantPattern(l, pattern)
+
+    var cmp_id: i64 = -1
+
+    if (variant_info.is_variant) {
+        // For variant patterns, extract tag from switch_val and compare against variant tag
+        const tag_id = lowerNewValue(l)
+        var tag_inst = newIRInst(IROp.VariantGetTag)
+        tag_inst.result_id = tag_id
+        tag_inst.op1_id = switch_val
+        tag_inst.line = pattern.loc.line
+        lowerEmit(l, tag_inst)
+
+        // Create constant for the variant tag
+        const tag_const_id = lowerNewValue(l)
+        var const_inst = newIRInst(IROp.IConst)
+        const_inst.result_id = tag_const_id
+        const_inst.int_val = variant_info.variant_tag
+        lowerEmit(l, const_inst)
+
+        // Compare tag with variant's tag
+        cmp_id = lowerNewValue(l)
+        var cmp_inst = newIRInst(IROp.ICmp)
+        cmp_inst.result_id = cmp_id
+        cmp_inst.op1_id = tag_id
+        cmp_inst.op2_id = tag_const_id
+        cmp_inst.cond = CondCode.Eq
+        lowerEmit(l, cmp_inst)
+    } else {
+        // Regular pattern matching: compare values directly
+        const pattern_val = lowerExpr(l, pattern)
+
+        cmp_id = lowerNewValue(l)
+        var cmp_inst = newIRInst(IROp.ICmp)
+        cmp_inst.result_id = cmp_id
+        cmp_inst.op1_id = switch_val
+        cmp_inst.op2_id = pattern_val
+        cmp_inst.cond = CondCode.Eq
+        lowerEmit(l, cmp_inst)
+    }
 
     const next_check = lowerCreateBlock(l, "switch_next")
-    inst = newIRInst(IROp.BrIf)
-    inst.op1_id = cmp_id
-    inst.target_block = arm_block
-    inst.else_block = next_check
-    lowerEmit(l, inst)
+    var br_inst = newIRInst(IROp.BrIf)
+    br_inst.op1_id = cmp_id
+    br_inst.target_block = arm_block
+    br_inst.else_block = next_check
+    lowerEmit(l, br_inst)
 
     lowerSwitchBlock(l, next_check)
 }
 
-fn lowerSwitchArmBody(l: Lowerer, arm: SwitchArm, arm_block: i64, exit_block: i64) {
+fn lowerSwitchArmBody(l: Lowerer, arm: SwitchArm, arm_block: i64, exit_block: i64, switch_val: i64) {
     lowerSwitchBlock(l, arm_block)
+
+    // Extract payload bindings for variant patterns
+    if (len(arm.binding_names) > 0 and switch_val >= 0) {
+        var i: i64 = 0
+        while (i < len(arm.binding_names)) {
+            const name = arm.binding_names[i]
+
+            // Extract payload value at index i using VariantGetPayload
+            const payload_id = lowerNewValue(l)
+            var extract_inst = newIRInst(IROp.VariantGetPayload)
+            extract_inst.result_id = payload_id
+            extract_inst.op1_id = switch_val
+            extract_inst.field_index = i  // Payload index
+            extract_inst.line = arm.loc.line
+            lowerEmit(l, extract_inst)
+
+            // Bind the extracted value to the variable name in current scope
+            if (l.scopes.len() > 0) {
+                const scope = l.scopes.get(l.scopes.len() - 1)
+                scope.vars.set(name, payload_id)
+            }
+
+            i += 1
+        }
+    }
+
     if (arm.body != null) {
         lowerExpr(l, arm.body.*)
     }
@@ -1461,11 +2390,10 @@ fn lowerLoopStmt(l: Lowerer, stmt: Stmt) {
 }
 
 fn lowerDeferStmt(l: Lowerer, stmt: Stmt) {
-    // Defer: push deferred expression onto a stack, execute at function/scope exit
-    // For now, emit the expression at point of defer (simplified)
-    // A full implementation would track deferred expressions and emit at scope exit
-    if (stmt.defer_expr != null) {
-        lowerExpr(l, stmt.defer_expr.*)
+    // Defer: push deferred expression onto a stack, execute at scope exit in LIFO order
+    if (stmt.defer_expr != null and l.scopes.len() > 0) {
+        const scope = l.scopes.get(l.scopes.len() - 1)
+        scope.defers.push(stmt.defer_expr)
     }
 }
 
@@ -1685,16 +2613,16 @@ fn lowerFunction(l: Lowerer, stmt: Stmt) {
 // Module Lowering (Entry Point)
 // =============================================================================
 
-fn lowerModule(l: Lowerer, stmts: []Stmt) {
+fn lowerModule(l: Lowerer, stmts: []*Stmt) {
     var i: i64 = 0
     while (i < len(stmts)) {
-        const stmt = stmts[i]
+        const stmt = stmts[i].*
         switch (stmt.kind) {
             StmtKind.FunctionDecl => { lowerFunction(l, stmt) }
             else => {
                 // Other top-level declarations (struct, enum, etc.) handled later
             }
         }
-        i = i + 1
+        i += 1
     }
 }

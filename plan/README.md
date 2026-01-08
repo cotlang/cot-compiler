@@ -12,6 +12,7 @@
 3. [Architecture](./03-architecture.md) - Compiler structure in Cot
 4. [Phases](./04-phases.md) - Implementation phases with milestones
 5. [Task List](./05-task-list.md) - Granular task breakdown
+6. [Feature Parity](./12-feature-parity.md) - **ACTIVE** - Language features needing implementation
 
 ## Key Insight
 

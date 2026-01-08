@@ -38,6 +38,63 @@ enum StmtKind {
     ComptimeStmt,       // Comptime block: comptime { } or comptime if { }
 }
 
+impl StmtKind {
+    // Check if this is a declaration statement
+    fn isDeclaration(self: StmtKind) bool {
+        return self == StmtKind.VarDecl or self == StmtKind.ConstDecl or
+               self == StmtKind.FunctionDecl or self == StmtKind.StructDecl or
+               self == StmtKind.UnionDecl or self == StmtKind.EnumDecl or
+               self == StmtKind.TraitDecl or self == StmtKind.TypeAliasDecl or
+               self == StmtKind.ViewDecl
+    }
+
+    // Check if this is a control flow statement
+    fn isControlFlow(self: StmtKind) bool {
+        return self == StmtKind.IfStmt or self == StmtKind.WhileStmt or
+               self == StmtKind.ForStmt or self == StmtKind.LoopStmt or
+               self == StmtKind.SwitchStmt or self == StmtKind.TryStmt
+    }
+
+    // Check if this is a jump statement
+    fn isJump(self: StmtKind) bool {
+        return self == StmtKind.ReturnStmt or self == StmtKind.BreakStmt or
+               self == StmtKind.ContinueStmt or self == StmtKind.ThrowStmt
+    }
+
+    // Get human-readable name
+    fn name(self: StmtKind) string {
+        switch (self) {
+            StmtKind.ExpressionStmt => { return "expression" }
+            StmtKind.VarDecl => { return "var" }
+            StmtKind.ConstDecl => { return "const" }
+            StmtKind.ReturnStmt => { return "return" }
+            StmtKind.IfStmt => { return "if" }
+            StmtKind.WhileStmt => { return "while" }
+            StmtKind.ForStmt => { return "for" }
+            StmtKind.LoopStmt => { return "loop" }
+            StmtKind.BlockStmt => { return "block" }
+            StmtKind.FunctionDecl => { return "fn" }
+            StmtKind.StructDecl => { return "struct" }
+            StmtKind.UnionDecl => { return "union" }
+            StmtKind.EnumDecl => { return "enum" }
+            StmtKind.ImplDecl => { return "impl" }
+            StmtKind.ImportStmt => { return "import" }
+            StmtKind.BreakStmt => { return "break" }
+            StmtKind.ContinueStmt => { return "continue" }
+            StmtKind.SwitchStmt => { return "switch" }
+            StmtKind.TraitDecl => { return "trait" }
+            StmtKind.TypeAliasDecl => { return "type" }
+            StmtKind.DeferStmt => { return "defer" }
+            StmtKind.TryStmt => { return "try" }
+            StmtKind.ThrowStmt => { return "throw" }
+            StmtKind.TestDecl => { return "test" }
+            StmtKind.ViewDecl => { return "view" }
+            StmtKind.ComptimeStmt => { return "comptime" }
+            else => { return "unknown" }
+        }
+    }
+}
+
 // =============================================================================
 // Expression Types
 // =============================================================================
@@ -78,6 +135,57 @@ enum ExprKind {
     InterpStringExpr, // Interpolated string: "Hello ${name}!"
 }
 
+impl ExprKind {
+    // Check if this is a literal expression
+    fn isLiteral(self: ExprKind) bool {
+        return self == ExprKind.IntLiteral or self == ExprKind.DecLiteral or
+               self == ExprKind.StrLiteral or self == ExprKind.BoolLiteral or
+               self == ExprKind.NullLiteral
+    }
+
+    // Check if this is an lvalue (can appear on left of assignment)
+    fn isLValue(self: ExprKind) bool {
+        return self == ExprKind.IdentifierExpr or self == ExprKind.FieldExpr or
+               self == ExprKind.IndexExpr
+    }
+
+    // Check if this requires sub-expressions
+    fn hasChildren(self: ExprKind) bool {
+        return !(self == ExprKind.IntLiteral or self == ExprKind.DecLiteral or
+                 self == ExprKind.StrLiteral or self == ExprKind.BoolLiteral or
+                 self == ExprKind.NullLiteral or self == ExprKind.IdentifierExpr)
+    }
+
+    // Get human-readable name
+    fn name(self: ExprKind) string {
+        switch (self) {
+            ExprKind.IntLiteral => { return "integer" }
+            ExprKind.DecLiteral => { return "decimal" }
+            ExprKind.StrLiteral => { return "string" }
+            ExprKind.BoolLiteral => { return "bool" }
+            ExprKind.NullLiteral => { return "null" }
+            ExprKind.IdentifierExpr => { return "identifier" }
+            ExprKind.FieldExpr => { return "field" }
+            ExprKind.IndexExpr => { return "index" }
+            ExprKind.BinaryExpr => { return "binary" }
+            ExprKind.UnaryExpr => { return "unary" }
+            ExprKind.CallExpr => { return "call" }
+            ExprKind.MethodCallExpr => { return "method_call" }
+            ExprKind.StructInitExpr => { return "struct_init" }
+            ExprKind.ArrayInitExpr => { return "array_init" }
+            ExprKind.IfExpr => { return "if" }
+            ExprKind.BlockExpr => { return "block" }
+            ExprKind.SwitchExpr => { return "switch" }
+            ExprKind.LambdaExpr => { return "lambda" }
+            ExprKind.RangeExpr => { return "range" }
+            ExprKind.CastExpr => { return "cast" }
+            ExprKind.SliceExpr => { return "slice" }
+            ExprKind.InterpStringExpr => { return "interp_string" }
+            else => { return "unknown" }
+        }
+    }
+}
+
 // =============================================================================
 // Type Reference Types
 // =============================================================================
@@ -93,6 +201,35 @@ enum TypeKind {
     Inferred,       // Type to be inferred: _
 }
 
+impl TypeKind {
+    // Check if this type has an inner type
+    fn hasInner(self: TypeKind) bool {
+        return self == TypeKind.Pointer or self == TypeKind.Optional or
+               self == TypeKind.Array or self == TypeKind.Slice
+    }
+
+    // Check if this is a compound type
+    fn isCompound(self: TypeKind) bool {
+        return self == TypeKind.Array or self == TypeKind.Slice or
+               self == TypeKind.Function or self == TypeKind.Generic
+    }
+
+    // Get human-readable name
+    fn name(self: TypeKind) string {
+        switch (self) {
+            TypeKind.Named => { return "named" }
+            TypeKind.Pointer => { return "pointer" }
+            TypeKind.Optional => { return "optional" }
+            TypeKind.Array => { return "array" }
+            TypeKind.Slice => { return "slice" }
+            TypeKind.Function => { return "function" }
+            TypeKind.Generic => { return "generic" }
+            TypeKind.Inferred => { return "inferred" }
+            else => { return "unknown" }
+        }
+    }
+}
+
 // =============================================================================
 // AST Node Structs
 // =============================================================================
@@ -105,16 +242,81 @@ struct SourceLoc {
     end: i64,
 }
 
+impl SourceLoc {
+    // Create a new source location
+    fn init(line: i64, column: i64, start: i64, end: i64) SourceLoc {
+        return SourceLoc{
+            .line = line,
+            .column = column,
+            .start = start,
+            .end = end,
+        }
+    }
+
+    // Create source location from a token
+    fn fromToken(tok: Token) SourceLoc {
+        return SourceLoc{
+            .line = tok.line,
+            .column = tok.column,
+            .start = tok.span.start,
+            .end = tok.span.end,
+        }
+    }
+
+    // Create a zero location (for synthetic nodes)
+    fn zero() SourceLoc {
+        return SourceLoc{
+            .line = 0,
+            .column = 0,
+            .start = 0,
+            .end = 0,
+        }
+    }
+
+    // Format as "line:column" string
+    fn display(self: SourceLoc) string {
+        return str(self.line) + ":" + str(self.column)
+    }
+}
+
 // Module - top-level container for all parsed statements
 struct Module {
-    statements: List<Stmt>,
+    statements: List<*Stmt>,
+    errors: List<string>,
     has_errors: bool,
 }
 
-fn newModule() Module {
-    return Module{
-        .statements = List.new(),
-        .has_errors = false,
+impl Module {
+    // Create a new empty module
+    fn init() Module {
+        var stmts = new List<*Stmt>
+        var errs = new List<string>
+        return Module{
+            .statements = stmts,
+            .errors = errs,
+            .has_errors = false,
+        }
+    }
+
+    // Add a statement to the module
+    fn addStatement(self: *Module, stmt: *Stmt) {
+        self.statements.push(stmt)
+    }
+
+    // Mark the module as having errors
+    fn markError(self: *Module) {
+        self.has_errors = true
+    }
+
+    // Add an error message
+    fn addError(self: *Module, msg: string) {
+        self.errors.push(msg)
+        self.has_errors = true
+    }
+
+    // Get the number of statements
+    fn stmtCount(self: *Module) i64 {
+        return self.statements.len()
     }
 }
 
@@ -200,6 +402,10 @@ struct Expr {
     // Slice
     slice_start: ?*Expr,
     slice_end: ?*Expr,
+
+    // Switch expression
+    switch_expr: ?*Expr,
+    switch_arms: []SwitchArm,
 }
 
 // Statement node
@@ -333,36 +539,256 @@ struct FieldInit {
 // Enum variant
 struct EnumVariant {
     name: string,
-    value: ?*Expr,       // Optional explicit value
+    value: ?*Expr,           // Optional explicit value (e.g., Foo = 1)
     loc: SourceLoc,
+    // Sum type payloads
+    payload_types: []*TypeRef,   // Tuple payload: Some(i64) -> [i64]
+    payload_fields: []Field,     // Struct payload: Ok { value: i64 } -> [Field{name="value", type=i64}]
+    has_payload: bool,           // True if this variant has any payload
 }
 
 // Switch arm
 struct SwitchArm {
-    pattern: ?*Expr,     // Pattern to match (or null for default)
-    body: ?*Expr,        // Body expression
+    pattern: ?*Expr,         // Pattern to match (or null for default)
+    body: ?*Expr,            // Body expression
     is_default: bool,
     loc: SourceLoc,
+    // Pattern binding for sum type payloads
+    binding_names: []string, // Variable names bound from payload: Some(val) => bindings=["val"]
 }
 
 // =============================================================================
-// Constructor Helpers
+// Traits
 // =============================================================================
 
-fn newSourceLoc(line: i64, column: i64, start: i64, end: i64) SourceLoc {
-    return SourceLoc{
-        .line = line,
-        .column = column,
-        .start = start,
-        .end = end,
+// Trait for types that can produce a display string
+trait Display {
+    fn display(self: *Self) string
+}
+
+// Trait for AST nodes with location information
+trait Located {
+    fn location(self: *Self) SourceLoc
+}
+
+// =============================================================================
+// Trait Implementations
+// =============================================================================
+
+// NOTE: Trait implementations commented out pending trait system improvements
+// impl Display for SourceLoc {
+//     fn display(self: *SourceLoc) string {
+//         return str(self.line) + ":" + str(self.column)
+//     }
+// }
+
+// impl Located for Expr {
+//     fn location(self: *Expr) SourceLoc {
+//         return self.loc
+//     }
+// }
+
+// impl Located for Stmt {
+//     fn location(self: *Stmt) SourceLoc {
+//         return self.loc
+//     }
+// }
+
+// impl Located for TypeRef {
+//     fn location(self: *TypeRef) SourceLoc {
+//         return self.loc
+//     }
+// }
+
+// =============================================================================
+// Expr Impl Block
+// =============================================================================
+
+impl Expr {
+    // Create a new expression of the given kind at the given location
+    fn init(kind: ExprKind, loc: SourceLoc) Expr {
+        return Expr{
+            .kind = kind,
+            .loc = loc,
+            .int_value = 0,
+            .dec_value = "",
+            .str_value = "",
+            .bool_value = false,
+            .name = "",
+            .op = TokenType.Eof,
+            .left = null,
+            .right = null,
+            .operand = null,
+            .callee = null,
+            .args = [],
+            .object = null,
+            .field_name = "",
+            .index = null,
+            .struct_type = null,
+            .field_inits = [],
+            .elements = [],
+            .condition = null,
+            .then_branch = null,
+            .else_branch = null,
+            .stmts = [],
+            .result = null,
+            .params = [],
+            .body = null,
+            .range_start = null,
+            .range_end = null,
+            .range_inclusive = false,
+            .cast_type = null,
+            .slice_start = null,
+            .slice_end = null,
+            .switch_expr = null,
+            .switch_arms = [],
+        }
     }
 }
 
-fn sourceLocFromToken(tok: Token) SourceLoc {
-    return SourceLoc{
-        .line = tok.line,
-        .column = tok.column,
-        .start = tok.span.start,
-        .end = tok.span.end,
+// =============================================================================
+// Stmt Impl Block
+// =============================================================================
+
+impl Stmt {
+    // Create a new statement of the given kind at the given location
+    fn init(kind: StmtKind, loc: SourceLoc) Stmt {
+        return Stmt{
+            .kind = kind,
+            .loc = loc,
+            .expr = null,
+            .var_name = "",
+            .var_type = null,
+            .var_init = null,
+            .var_mutable = false,
+            .return_value = null,
+            .if_cond = null,
+            .if_then = null,
+            .if_else = null,
+            .while_cond = null,
+            .while_body = null,
+            .for_var = "",
+            .for_iter = null,
+            .for_body = null,
+            .block_stmts = [],
+            .fn_name = "",
+            .fn_params = [],
+            .fn_return_type = null,
+            .fn_body = null,
+            .fn_public = false,
+            .struct_name = "",
+            .struct_fields = [],
+            .enum_name = "",
+            .enum_variants = [],
+            .impl_type = null,
+            .impl_trait = null,
+            .impl_methods = [],
+            .import_path = "",
+            .switch_expr = null,
+            .switch_arms = [],
+            .alias_name = "",
+            .alias_type = null,
+            .loop_body = null,
+            .union_name = "",
+            .union_fields = [],
+            .defer_expr = null,
+            .try_body = null,
+            .catch_body = null,
+            .catch_var = "",
+            .throw_expr = null,
+            .test_name = "",
+            .test_body = null,
+            .view_name = "",
+            .view_type = null,
+            .view_base_field = "",
+            .view_offset = 0,
+            .trait_name = "",
+            .trait_methods = [],
+            .comptime_body = null,
+            .comptime_cond = null,
+            .comptime_else = null,
+        }
     }
+}
+
+// =============================================================================
+// TypeRef Impl Block
+// =============================================================================
+
+impl TypeRef {
+    // Create a new type reference of the given kind
+    fn init(kind: TypeKind, loc: SourceLoc) TypeRef {
+        return TypeRef{
+            .kind = kind,
+            .loc = loc,
+            .name = "",
+            .inner = null,
+            .array_size = 0,
+            .param_types = [],
+            .return_type = null,
+            .type_args = [],
+        }
+    }
+
+    // Create a named type
+    fn named(n: string, loc: SourceLoc) TypeRef {
+        var t: TypeRef = TypeRef.init(TypeKind.Named, loc)
+        t.name = n
+        return t
+    }
+
+    // Create a pointer type
+    fn pointer(inner: *TypeRef, loc: SourceLoc) TypeRef {
+        var t: TypeRef = TypeRef.init(TypeKind.Pointer, loc)
+        t.inner = inner
+        return t
+    }
+
+    // Create an optional type
+    fn optional(inner: *TypeRef, loc: SourceLoc) TypeRef {
+        var t: TypeRef = TypeRef.init(TypeKind.Optional, loc)
+        t.inner = inner
+        return t
+    }
+}
+
+// =============================================================================
+// Arena Allocation Infrastructure
+// =============================================================================
+
+// Global arenas for AST node allocation
+var g_expr_arena = new List<Expr>
+var g_stmt_arena = new List<Stmt>
+var g_typeref_arena = new List<TypeRef>
+
+// Allocate an expression in the arena and return a pointer
+fn allocExpr(e: Expr) *Expr {
+    g_expr_arena.push(e)
+    return g_expr_arena.getPtr(g_expr_arena.len() - 1)
+}
+
+// Allocate a statement in the arena and return a pointer
+fn allocStmt(s: Stmt) *Stmt {
+    g_stmt_arena.push(s)
+    return g_stmt_arena.getPtr(g_stmt_arena.len() - 1)
+}
+
+// Allocate a type reference in the arena and return a pointer
+fn allocTypeRef(t: TypeRef) *TypeRef {
+    g_typeref_arena.push(t)
+    return g_typeref_arena.getPtr(g_typeref_arena.len() - 1)
+}
+
+// Clear all arenas (for starting fresh parse)
+fn clearArenas() {
+    g_expr_arena = new List<Expr>
+    g_stmt_arena = new List<Stmt>
+    g_typeref_arena = new List<TypeRef>
+}
+
+// Get arena statistics
+fn arenaStats() string {
+    return "Exprs: " + str(g_expr_arena.len()) +
+           ", Stmts: " + str(g_stmt_arena.len()) +
+           ", TypeRefs: " + str(g_typeref_arena.len())
 }

@@ -1,0 +1,25 @@
+import "../src/token"
+import "../src/lexer"
+import "../src/ast"
+import "../src/parser"
+
+fn main() i64 {
+    println("Testing...")
+    
+    const source = "fn main() { }"
+    var p = Parser.create(source)
+    println("Parser created")
+    
+    var mod = p.parseModule()
+    println("Module parsed!")
+    
+    // Try to access has_errors
+    if (mod.has_errors) {
+        println("Has errors")
+    } else {
+        println("No errors")
+    }
+    
+    println("Done!")
+    return 0
+}

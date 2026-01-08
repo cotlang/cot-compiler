@@ -120,19 +120,21 @@ All critical features verified working:
 - [x] Implement precedence enum and getInfixPrecedence
 - [x] Implement parseInt, parseHex, parseBinary utilities
 
-### 2.3 Expression Parsing (Pratt Parser) - COMPLETE
+### 2.3 Expression Parsing (Pratt Parser) - SYNTAX COMPLETE, AST POPULATION INCOMPLETE
 - [x] Implement precedence enum and getInfixPrecedence
 - [x] Implement parseExpr (entry point)
 - [x] Implement parseExprPrec with precedence (Pratt parser)
 - [x] Implement parsePrimaryExpr (literals, identifiers, grouping, unary ops)
-- [x] Implement makeBinaryExpr, makeUnaryExpr, make*Expr constructors
+- [~] Implement makeBinaryExpr, makeUnaryExpr, make*Expr constructors
+  - **WARNING:** These do NOT populate child nodes! See `plan/10-parser-ast-fix.md`
+  - 16 TODOs: Need to store operand, left/right, callee, object, etc.
 - [x] Implement precToInt/intToPrec helpers for precedence comparison
 - [x] Implement parseCallExpr (function calls)
 - [x] Implement parseIndexExpr (array/slice indexing)
 - [x] Implement parseFieldExpr (field access)
-- [x] Implement makeCallExpr, makeFieldExpr, makeIndexExpr constructors
+- [~] Implement makeCallExpr, makeFieldExpr, makeIndexExpr constructors (child nodes not stored)
 
-### 2.4 Statement Parsing - COMPLETE
+### 2.4 Statement Parsing - SYNTAX COMPLETE, AST POPULATION INCOMPLETE
 - [x] Implement parseStatement (dispatch by keyword)
 - [x] Implement parseVarDecl
 - [x] Implement parseConstDecl
@@ -143,7 +145,8 @@ All critical features verified working:
 - [x] Implement parseBlock
 - [x] Implement parseSwitchStmt
 - [x] Implement parseExpressionStmt
-- [x] Implement statement constructors (makeExprStmt, makeVarDeclStmt, etc.)
+- [~] Implement statement constructors (makeExprStmt, makeVarDeclStmt, etc.)
+  - **WARNING:** 18 TODOs - child nodes not stored! See `plan/10-parser-ast-fix.md`
 
 ### 2.5 Declaration Parsing - COMPLETE
 - [x] Implement parseFunctionDecl
@@ -152,14 +155,15 @@ All critical features verified working:
 - [x] Implement parseImplDecl
 - [x] Implement parseImport
 
-### 2.6 Type Parsing - COMPLETE
+### 2.6 Type Parsing - SYNTAX COMPLETE, AST POPULATION INCOMPLETE
 - [x] Implement parseType
-- [x] Handle pointer types (*T)
-- [x] Handle optional types (?T)
-- [x] Handle array types ([N]T)
-- [x] Handle slice types ([]T)
-- [x] Handle function types
-- [x] Handle generic types (T[U])
+- [~] Handle pointer types (*T) - inner type not stored
+- [~] Handle optional types (?T) - inner type not stored
+- [~] Handle array types ([N]T) - element type not stored
+- [~] Handle slice types ([]T) - element type not stored
+- [~] Handle function types - param/return types not stored
+- [~] Handle generic types (T[U]) - type args not stored
+- **WARNING:** 7 TODOs - inner/child types not stored! See `plan/10-parser-ast-fix.md`
 
 ### 2.7 Parser Tests
 - [!] Test file: tests/parser_test.cot (created, blocked by cache bug)
@@ -180,20 +184,39 @@ All critical features verified working:
 
 ## IMMEDIATE PRIORITIES
 
+### 🚨 CRITICAL BLOCKER: Parser AST Population (2026-01-07)
+
+**The parser validates syntax but does NOT populate AST child nodes.**
+- 41 TODOs in parser.cot: "Need to store X somehow"
+- Blocks: type checker, IR lowering, bytecode emission, bootstrap
+- See: `plan/10-parser-ast-fix.md` for detailed fix plan (~3 hours)
+
+**Fix order:**
+1. [ ] Add allocation infrastructure (`allocExpr`, `allocStmt`, `allocTypeRef`)
+2. [ ] Fix 16 expression makers (operand, left/right, callee, etc.)
+3. [ ] Fix 7 type parsing functions (inner types, type args)
+4. [ ] Fix 18 statement makers (condition, body, branches, etc.)
+5. [ ] Remove debug println statements
+6. [ ] Integration test with type checker
+
+---
+
+### Previous Milestones (Completed)
+
 1. ~~**Language Enhancement: `else if`**~~ ✅ DONE
 2. ~~**Language Enhancement: `switch` on strings**~~ ✅ DONE
 3. ~~**Refactor lexer.cot**~~ ✅ DONE (already uses switch on strings)
 4. ~~**Phase 2.1: AST Module**~~ ✅ DONE (`src/ast.cot`)
 5. ~~**Phase 2.2: Parser Core**~~ ✅ DONE (`src/parser.cot`)
-6. ~~**Phase 2.3: Expression Parsing**~~ ✅ DONE - Pratt parser with all expression types
-7. ~~**Phase 2.4: Statement Parsing**~~ ✅ DONE - var/const, if, while, for, switch, block
+6. ~~**Phase 2.3: Expression Parsing**~~ ⚠️ SYNTAX DONE - AST population incomplete
+7. ~~**Phase 2.4: Statement Parsing**~~ ⚠️ SYNTAX DONE - AST population incomplete
 8. ~~**Phase 2.5: Declaration Parsing**~~ ✅ DONE - fn, struct, enum, impl, import
-9. ~~**Phase 2.6: Type Parsing**~~ ✅ DONE - Named, pointer, optional, array, slice, generic, function
-10. **Phase 2.7: Parser Tests** - Create test file
-11. ~~**Phase 3: Type Checker**~~ ✅ DONE - All 26 statement + 22 expression kinds
-12. ~~**Phase 4: IR Module**~~ ✅ DONE - ir.cot + lower.cot complete
-13. ~~**Phase 5: Bytecode Emission**~~ ✅ DONE - opcodes.cot + emit.cot
-14. **Phase 6: Bootstrap** - Not Started
+9. ~~**Phase 2.6: Type Parsing**~~ ⚠️ SYNTAX DONE - inner types not stored
+10. **Phase 2.7: Parser Tests** - Blocked by AST population
+11. **Phase 3: Type Checker** - ⚠️ Written but cannot run without real AST
+12. **Phase 4: IR Module** - ⚠️ Written but cannot run without real AST
+13. **Phase 5: Bytecode Emission** - ⚠️ Written but cannot run without real IR
+14. **Phase 6: Bootstrap** - Blocked by above
 
 ---
 

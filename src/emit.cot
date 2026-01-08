@@ -221,8 +221,8 @@ struct RegisterAllocator {
 }
 
 fn newRegisterAllocator() RegisterAllocator {
-    const value_to_reg: Map<i64, i64> = Map.new()
-    const reg_to_value: List<i64> = List.new()
+    const value_to_reg= new Map<i64, i64>
+    const reg_to_value= new List<i64>
 
     var i: i64 = 0
     while (i < 16) {
@@ -344,18 +344,18 @@ struct BytecodeEmitter {
 }
 
 fn newBytecodeEmitter() BytecodeEmitter {
-    const code: List<i64> = List.new()
-    const constants: List<ConstantEntry> = List.new()
-    const routines: List<RoutineDef> = List.new()
-    const exports: List<ExportEntry> = List.new()
-    const globals: Map<string, VarLocation> = Map.new()
-    const locals: Map<string, VarLocation> = Map.new()
-    const string_pool: Map<string, i64> = Map.new()
-    const int_pool: Map<i64, i64> = Map.new()
-    const function_indices: Map<string, i64> = Map.new()
-    const block_offsets: Map<i64, i64> = Map.new()
-    const pending_jumps: List<PendingJump> = List.new()
-    const value_slots: Map<i64, i64> = Map.new()
+    const code= new List<i64>
+    const constants= new List<ConstantEntry>
+    const routines= new List<RoutineDef>
+    const exports= new List<ExportEntry>
+    const globals= new Map<string, VarLocation>
+    const locals= new Map<string, VarLocation>
+    const string_pool= new Map<string, i64>
+    const int_pool= new Map<i64, i64>
+    const function_indices= new Map<string, i64>
+    const block_offsets= new Map<i64, i64>
+    const pending_jumps= new List<PendingJump>
+    const value_slots= new Map<i64, i64>
     const reg_alloc = newRegisterAllocator()
 
     return BytecodeEmitter{
@@ -897,13 +897,13 @@ struct ModuleBuilder {
 
 fn newModuleBuilder() ModuleBuilder {
     return ModuleBuilder{
-        .header = List.new(),
-        .section_table = List.new(),
-        .constants_section = List.new(),
-        .types_section = List.new(),
-        .routines_section = List.new(),
-        .code_section = List.new(),
-        .exports_section = List.new(),
+        .header = new List<i64>,
+        .section_table = new List<i64>,
+        .constants_section = new List<i64>,
+        .types_section = new List<i64>,
+        .routines_section = new List<i64>,
+        .code_section = new List<i64>,
+        .exports_section = new List<i64>,
         .section_count = 0,
     }
 }
@@ -1158,9 +1158,9 @@ struct TranslateContext {
 fn newTranslateContext(e: BytecodeEmitter) TranslateContext {
     return TranslateContext{
         .emitter = e,
-        .value_regs = Map.new(),
-        .block_labels = Map.new(),
-        .local_slots = Map.new(),
+        .value_regs = new Map<i64, i64>,
+        .block_labels = new Map<i64, i64>,
+        .local_slots = new Map<string, i64>,
         .next_local = 0,
     }
 }
@@ -1642,7 +1642,7 @@ fn emitBuildModule(e: BytecodeEmitter, entry_point: i64, source_hash: i64) List<
     mbWriteHeader(mb, entry_point, source_hash)
 
     // Assemble final module
-    const result: List<i64> = List.new()
+    const result= new List<i64>
 
     // Copy header
     i = 0

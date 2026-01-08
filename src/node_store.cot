@@ -105,35 +105,35 @@ pub const TK_RESULT: i64 = 9     // T!E
 // =============================================================================
 
 // The global node store - initialized by nsInit()
-var g_stmt_kinds: List<i64> = List.new()
-var g_stmt_lines: List<i64> = List.new()
-var g_stmt_data1: List<i64> = List.new()
-var g_stmt_data2: List<i64> = List.new()
-var g_expr_kinds: List<i64> = List.new()
-var g_expr_lines: List<i64> = List.new()
-var g_expr_data1: List<i64> = List.new()
-var g_expr_data2: List<i64> = List.new()
-var g_type_kinds: List<i64> = List.new()
-var g_type_data1: List<i64> = List.new()
-var g_type_data2: List<i64> = List.new()
-var g_strings: List<string> = List.new()
-var g_extra: List<i64> = List.new()
+var g_stmt_kinds= new List<i64>
+var g_stmt_lines= new List<i64>
+var g_stmt_data1= new List<i64>
+var g_stmt_data2= new List<i64>
+var g_expr_kinds= new List<i64>
+var g_expr_lines= new List<i64>
+var g_expr_data1= new List<i64>
+var g_expr_data2= new List<i64>
+var g_type_kinds= new List<i64>
+var g_type_data1= new List<i64>
+var g_type_data2= new List<i64>
+var g_strings= new List<string>
+var g_extra= new List<i64>
 
 // Reset/reinitialize the global store (for testing or reuse)
 fn nsInit() {
-    g_stmt_kinds = List.new()
-    g_stmt_lines = List.new()
-    g_stmt_data1 = List.new()
-    g_stmt_data2 = List.new()
-    g_expr_kinds = List.new()
-    g_expr_lines = List.new()
-    g_expr_data1 = List.new()
-    g_expr_data2 = List.new()
-    g_type_kinds = List.new()
-    g_type_data1 = List.new()
-    g_type_data2 = List.new()
-    g_strings = List.new()
-    g_extra = List.new()
+    g_stmt_kinds = new List<i64>
+    g_stmt_lines = new List<i64>
+    g_stmt_data1 = new List<i64>
+    g_stmt_data2 = new List<i64>
+    g_expr_kinds = new List<i64>
+    g_expr_lines = new List<i64>
+    g_expr_data1 = new List<i64>
+    g_expr_data2 = new List<i64>
+    g_type_kinds = new List<i64>
+    g_type_data1 = new List<i64>
+    g_type_data2 = new List<i64>
+    g_strings = new List<string>
+    g_extra = new List<i64>
 }
 
 // =============================================================================

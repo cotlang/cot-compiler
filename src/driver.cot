@@ -1,39 +1,190 @@
 // Cot Self-Hosted Compiler Driver
 //
-// This driver demonstrates the compilation pipeline using imports.
+// Usage: cot-compiler compile <source.cot> [-o <output.cbo>]
+//
+// This driver orchestrates the compilation pipeline:
+// 1. Parse command-line arguments
+// 2. Read source file
+// 3. Lexer -> Parser -> AST
+// 4. Type checking
+// 5. AST -> IR lowering
+// 6. IR -> Bytecode emission
+// 7. Write bytecode to output file
 
 import "token"
 import "lexer"
 import "ast"
 import "parser"
+import "types"
+import "type_checker"
+import "ir"
+import "lower"
+import "emit"
 
 fn main() i64 {
-    println("=== Cot Self-Hosted Compiler Driver ===")
-    println("")
+    // Get command-line arguments
+    var args = process_args()
 
-    // Test source code
-    const source = "fn add(a: i64, b: i64) i64 { return a + b }"
-
-    println("Source code:")
-    println(source)
-    println("")
-
-    // Phase 1: Parse
-    println("=== Phase 1: Parsing ===")
-    var parser = newParser(source)
-    println("Parser created")
-
-    var mod = parserParseModule(&parser)
-    println("Module parsed")
-
-    if (mod.has_errors) {
-        println("Parse errors occurred!")
+    // Need at least: program_name, "compile", source_file
+    if (args.len() < 3) {
+        printUsage()
         return 1
     }
 
-    println("Statements parsed: " + string(mod.statements.len()))
-    println("Parser test passed!")
+    // Skip program name (args[0])
+    var cmd = args.get(1)
+
+    if (cmd != "compile") {
+        println("Unknown command: " + cmd)
+        printUsage()
+        return 1
+    }
+
+    // Get source file
+    var source_file = args.get(2)
+
+    // Get output file (default: replace .cot with .cbo)
+    var output_file = getOutputPath(source_file, args)
+
+    println("=== Cot Self-Hosted Compiler ===")
+    println("Source: " + source_file)
+    println("Output: " + output_file)
     println("")
 
-    return 0
+    // Phase 1: Read source file
+    println("Reading source file...")
+    var source = read_file(source_file)
+    if (len(source) == 0) {
+        println("Error: Could not read file: " + source_file)
+        return 1
+    }
+    println("  Read " + string(len(source)) + " bytes")
+
+    // Phase 2: Parse
+    println("")
+    println("=== Phase 1: Parsing ===")
+    var parser = Parser.create(source)
+    var mod = parser.parseModule()
+
+    if (mod.has_errors) {
+        println("Parse errors:")
+        var i: i64 = 0
+        while (i < mod.errors.len()) {
+            println("  " + mod.errors.get(i))
+            i += 1
+        }
+        return 1
+    }
+
+    println("  Parsed " + string(mod.statements.len()) + " top-level statements")
+
+    // Phase 3: Type Check
+    println("")
+    println("=== Phase 2: Type Checking ===")
+    var stmts = mod.statements.to_slice()
+    var tc = typeCheck(stmts)
+
+    if (tc.had_error) {
+        println("Type errors:")
+        var i: i64 = 0
+        while (i < tc.errors.len()) {
+            println("  " + tc.errors.get(i))
+            i += 1
+        }
+        return 1
+    }
+
+    println("  Type check passed")
+
+    // Phase 4: Lower to IR
+    println("")
+    println("=== Phase 3: Lowering to IR ===")
+    var lowerer = newLowerer(tc.reg)
+    lowerModule(lowerer, stmts)
+
+    if (lowerer.had_error) {
+        println("Lowering errors:")
+        var i: i64 = 0
+        while (i < lowerer.errors.len()) {
+            println("  " + lowerer.errors.get(i))
+            i += 1
+        }
+        return 1
+    }
+
+    println("  Lowered " + string(lowerer.module.functions.len()) + " functions")
+
+    // Phase 5: Emit bytecode
+    println("")
+    println("=== Phase 4: Emitting Bytecode ===")
+    var emitter = newBytecodeEmitter()
+
+    // TODO: Translate IR module to bytecode
+    // This requires implementing the IR -> BytecodeEmitter bridge
+    // For now, emit a minimal module
+
+    // Find main function for entry point
+    var entry_point: i64 = -1
+    var fn_idx: i64 = 0
+    while (fn_idx < lowerer.module.functions.len()) {
+        var func = lowerer.module.functions.get(fn_idx)
+        if (func.name == "main") {
+            entry_point = fn_idx
+        }
+        fn_idx += 1
+    }
+
+    if (entry_point < 0) {
+        println("Warning: No main() function found")
+    }
+
+    // Build the bytecode module
+    var bytecode = emitBuildModule(emitter, entry_point, 0)
+    println("  Generated " + string(bytecode.len()) + " bytes of bytecode")
+
+    // Phase 6: Write output
+    println("")
+    println("=== Phase 5: Writing Output ===")
+    var success = write_bytes(output_file, bytecode)
+
+    if (success) {
+        println("  Wrote " + output_file)
+        println("")
+        println("Compilation successful!")
+        return 0
+    } else {
+        println("Error: Failed to write " + output_file)
+        return 1
+    }
+}
+
+fn printUsage() {
+    println("Usage: cot-compiler compile <source.cot> [-o <output.cbo>]")
+    println("")
+    println("Commands:")
+    println("  compile    Compile source file to bytecode")
+    println("")
+    println("Options:")
+    println("  -o <file>  Output file (default: <source>.cbo)")
+}
+
+fn getOutputPath(source_file: string, args: List<string>) string {
+    // Check for -o flag
+    var i: i64 = 3
+    while (i < args.len()) {
+        if (args.get(i) == "-o" and i + 1 < args.len()) {
+            return args.get(i + 1)
+        }
+        i += 1
+    }
+
+    // Default: replace .cot with .cbo
+    if (len(source_file) > 4) {
+        var ext = source_file[len(source_file) - 4..len(source_file)]
+        if (ext == ".cot") {
+            return source_file[0..len(source_file) - 4] + ".cbo"
+        }
+    }
+
+    return source_file + ".cbo"
 }

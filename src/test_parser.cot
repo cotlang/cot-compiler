@@ -1,0 +1,23 @@
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+fn main() i64 {
+    println("Testing parser...")
+    
+    const source = "fn add(x: i64) i64 { return x }"
+    var parser = Parser.create(source)
+    println("Parser created, calling parseModule...")
+    
+    var mod = parser.parseModule()
+    println("parseModule returned")
+    
+    if (mod.has_errors) {
+        println("Parse errors!")
+        return 1
+    }
+    
+    println("Statements: " + string(mod.statements.len()))
+    return 0
+}

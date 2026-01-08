@@ -1,0 +1,19 @@
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+fn main() i64 {
+    println("Starting...")
+    var parser = Parser.create("fn test() i64 { return 0 }")
+    println("Parser created, current token: '" + parser.current.lexeme + "'")
+    
+    println("Calling parseModule...")
+    var mod = parser.parseModule()
+    println("parseModule returned!")
+    
+    println("Has errors: " + string(mod.has_errors))
+    println("Statement count: " + string(mod.statements.len()))
+    
+    return 0
+}

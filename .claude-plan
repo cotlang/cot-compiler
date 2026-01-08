@@ -1,0 +1,43 @@
+# Claude Plan Tracker for cot-compiler
+
+**Last Updated:** 2026-01-08
+**Active Plan:** `plan/12-feature-parity.md`
+
+## Current Status
+
+All compiler phases are code-complete (lexer, parser, type checker, IR, bytecode).
+Focus is now on **feature parity** - implementing remaining Cot language features.
+
+## Next Tasks (Priority Order)
+
+1. **Sum Type Payloads** (P0)
+   - Parser: `parseEnumDecl` needs to parse payload types
+   - Type Checker: `collectEnumDecl` needs to store payload type IDs
+   - IR Lower: Need `variant_construct`, `variant_get_tag`, `variant_get_payload`
+   - Status: NOT STARTED
+
+2. **Defer Correctness** (P0)
+   - `lowerDeferStmt` executes immediately instead of at scope exit
+   - Need defer stack, LIFO emission at return/break/continue/throw
+   - Status: NOT STARTED
+
+3. **Switch Expression** (P1)
+   - `lowerSwitchExpr` doesn't process arms
+   - Need phi node or result register for value merging
+   - Status: NOT STARTED
+
+4. **Method Resolution** (P1)
+   - `checkMethodCallExpr` returns i64 default
+   - Need to look up actual method signature from impl block
+   - Status: NOT STARTED
+
+## Authoritative Documents
+
+- `plan/12-feature-parity.md` - Feature implementation checklist
+- `plan/05-task-list.md` - Overall bootstrap task list
+- `~/cotlang/SYNTAX.md` - Language specification (source of truth)
+
+## Notes
+
+When fixing Zig compiler bugs, remember to update cot-compiler if the fix
+affects how features should be implemented. Keep the two in sync conceptually.

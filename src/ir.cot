@@ -50,12 +50,61 @@ struct IRType {
     array_size: i64,
 }
 
-fn newIRType(tag: IRTypeTag, name: string) IRType {
-    return IRType{
-        .tag = tag,
-        .name = name,
-        .element_type_id = -1,
-        .array_size = 0,
+impl IRType {
+    fn init(tag: IRTypeTag, name: string) IRType {
+        return IRType{
+            .tag = tag,
+            .name = name,
+            .element_type_id = -1,
+            .array_size = 0,
+        }
+    }
+
+    fn isInteger(self: IRType) bool {
+        switch (self.tag) {
+            IRTypeTag.I8 => { return true }
+            IRTypeTag.I16 => { return true }
+            IRTypeTag.I32 => { return true }
+            IRTypeTag.I64 => { return true }
+            IRTypeTag.U8 => { return true }
+            IRTypeTag.U16 => { return true }
+            IRTypeTag.U32 => { return true }
+            IRTypeTag.U64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isFloat(self: IRType) bool {
+        switch (self.tag) {
+            IRTypeTag.F32 => { return true }
+            IRTypeTag.F64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isNumeric(self: IRType) bool {
+        return self.isInteger() or self.isFloat()
+    }
+
+    fn isSigned(self: IRType) bool {
+        switch (self.tag) {
+            IRTypeTag.I8 => { return true }
+            IRTypeTag.I16 => { return true }
+            IRTypeTag.I32 => { return true }
+            IRTypeTag.I64 => { return true }
+            IRTypeTag.F32 => { return true }
+            IRTypeTag.F64 => { return true }
+            else => { return false }
+        }
+    }
+
+    fn isPointer(self: IRType) bool {
+        switch (self.tag) {
+            IRTypeTag.Ptr => { return true }
+            IRTypeTag.Optional => { return true }
+            IRTypeTag.Slice => { return true }
+            else => { return false }
+        }
     }
 }
 
@@ -68,17 +117,19 @@ struct IRValue {
     type_id: i64,
 }
 
-fn newIRValue(id: i64, type_id: i64) IRValue {
-    return IRValue{
-        .id = id,
-        .type_id = type_id,
+impl IRValue {
+    fn init(id: i64, type_id: i64) IRValue {
+        return IRValue{
+            .id = id,
+            .type_id = type_id,
+        }
     }
-}
 
-fn invalidValue() IRValue {
-    return IRValue{
-        .id = -1,
-        .type_id = -1,
+    fn invalid() IRValue {
+        return IRValue{
+            .id = -1,
+            .type_id = -1,
+        }
     }
 }
 
@@ -191,6 +242,45 @@ enum IROp {
 
     // Error handling
     ErrThrow,        // Throw an error
+
+    // Sum type (variant) operations
+    VariantConstruct,  // Construct variant with tag and payload values
+    VariantGetTag,     // Extract the discriminant tag from a variant
+    VariantGetPayload, // Extract payload field from a variant
+
+    // Closure operations
+    MakeClosure,       // Create closure from function name and environment map
+}
+
+impl IROp {
+    fn isTerminator(self: IROp) bool {
+        switch (self) {
+            IROp.Jump => { return true }
+            IROp.BrIf => { return true }
+            IROp.BrTable => { return true }
+            IROp.Ret => { return true }
+            IROp.ErrThrow => { return true }
+            else => { return false }
+        }
+    }
+
+    fn producesValue(self: IROp) bool {
+        switch (self) {
+            IROp.Store => { return false }
+            IROp.Jump => { return false }
+            IROp.BrIf => { return false }
+            IROp.BrTable => { return false }
+            IROp.Ret => { return false }
+            IROp.ErrThrow => { return false }
+            IROp.ArrayStore => { return false }
+            IROp.ListPush => { return false }
+            IROp.ListSet => { return false }
+            IROp.MapSet => { return false }
+            IROp.MapDelete => { return false }
+            IROp.DebugLine => { return false }
+            else => { return true }
+        }
+    }
 }
 
 // Comparison condition codes
@@ -227,53 +317,26 @@ struct IRInst {
     line: i64,
 }
 
-fn newIRInst(op: IROp) IRInst {
-    return IRInst{
-        .op = op,
-        .result_id = -1,
-        .result_type_id = -1,
-        .op1_id = -1,
-        .op2_id = -1,
-        .op3_id = -1,
-        .int_val = 0,
-        .str_val = "",
-        .bool_val = false,
-        .cond = CondCode.Eq,
-        .target_block = -1,
-        .else_block = -1,
-        .callee = "",
-        .field_name = "",
-        .field_index = -1,
-        .line = 0,
-    }
-}
-
-fn isTerminator(op: IROp) bool {
-    switch (op) {
-        IROp.Jump => { return true }
-        IROp.BrIf => { return true }
-        IROp.BrTable => { return true }
-        IROp.Ret => { return true }
-        IROp.ErrThrow => { return true }
-        else => { return false }
-    }
-}
-
-fn producesValue(op: IROp) bool {
-    switch (op) {
-        IROp.Store => { return false }
-        IROp.Jump => { return false }
-        IROp.BrIf => { return false }
-        IROp.BrTable => { return false }
-        IROp.Ret => { return false }
-        IROp.ErrThrow => { return false }
-        IROp.ArrayStore => { return false }
-        IROp.ListPush => { return false }
-        IROp.ListSet => { return false }
-        IROp.MapSet => { return false }
-        IROp.MapDelete => { return false }
-        IROp.DebugLine => { return false }
-        else => { return true }
+impl IRInst {
+    fn init(op: IROp) IRInst {
+        return IRInst{
+            .op = op,
+            .result_id = -1,
+            .result_type_id = -1,
+            .op1_id = -1,
+            .op2_id = -1,
+            .op3_id = -1,
+            .int_val = 0,
+            .str_val = "",
+            .bool_val = false,
+            .cond = CondCode.Eq,
+            .target_block = -1,
+            .else_block = -1,
+            .callee = "",
+            .field_name = "",
+            .field_index = -1,
+            .line = 0,
+        }
     }
 }
 
@@ -289,29 +352,28 @@ struct IRBlock {
     succs: List<i64>,
 }
 
-fn newIRBlock(id: i64, label: string) IRBlock {
-    const insts: List<IRInst> = List.new()
-    const preds: List<i64> = List.new()
-    const succs: List<i64> = List.new()
-    return IRBlock{
-        .id = id,
-        .label = label,
-        .insts = insts,
-        .preds = preds,
-        .succs = succs,
+impl IRBlock {
+    fn init(id: i64, label: string) IRBlock {
+        return IRBlock{
+            .id = id,
+            .label = label,
+            .insts = new List<IRInst>,
+            .preds = new List<i64>,
+            .succs = new List<i64>,
+        }
     }
-}
 
-fn blockAppend(block: IRBlock, inst: IRInst) {
-    block.insts.push(inst)
-}
-
-fn blockIsTerminated(block: IRBlock) bool {
-    if (block.insts.len() == 0) {
-        return false
+    fn append(self: IRBlock, inst: IRInst) {
+        self.insts.push(inst)
     }
-    const last = block.insts.get(block.insts.len() - 1)
-    return isTerminator(last.op)
+
+    fn isTerminated(self: IRBlock) bool {
+        if (self.insts.len() == 0) {
+            return false
+        }
+        const last = self.insts.get(self.insts.len() - 1)
+        return last.op.isTerminator()
+    }
 }
 
 // =============================================================================
@@ -332,43 +394,40 @@ struct IRFunction {
     locals: Map<string, i64>,
 }
 
-fn newIRFunction(name: string) IRFunction {
-    const param_names: List<string> = List.new()
-    const param_type_ids: List<i64> = List.new()
-    const blocks: List<IRBlock> = List.new()
-    const locals: Map<string, i64> = Map.new()
-
-    return IRFunction{
-        .name = name,
-        .export_name = "",
-        .is_public = false,
-        .param_names = param_names,
-        .param_type_ids = param_type_ids,
-        .return_type_id = -1,
-        .entry_block = -1,
-        .blocks = blocks,
-        .next_value_id = 0,
-        .next_block_id = 0,
-        .locals = locals,
+impl IRFunction {
+    fn init(name: string) IRFunction {
+        return IRFunction{
+            .name = name,
+            .export_name = "",
+            .is_public = false,
+            .param_names = new List<string>,
+            .param_type_ids = new List<i64>,
+            .return_type_id = -1,
+            .entry_block = -1,
+            .blocks = new List<IRBlock>,
+            .next_value_id = 0,
+            .next_block_id = 0,
+            .locals = new Map<string, i64>,
+        }
     }
-}
 
-fn fnNewValue(func: IRFunction) i64 {
-    const id = func.next_value_id
-    func.next_value_id = func.next_value_id + 1
-    return id
-}
+    fn newValue(self: IRFunction) i64 {
+        const id = self.next_value_id
+        self.next_value_id = self.next_value_id + 1
+        return id
+    }
 
-fn fnCreateBlock(func: IRFunction, label: string) i64 {
-    const id = func.next_block_id
-    func.next_block_id = func.next_block_id + 1
-    const block = newIRBlock(id, label)
-    func.blocks.push(block)
-    return id
-}
+    fn createBlock(self: IRFunction, label: string) i64 {
+        const id = self.next_block_id
+        self.next_block_id = self.next_block_id + 1
+        const block = IRBlock.init(id, label)
+        self.blocks.push(block)
+        return id
+    }
 
-fn fnGetBlock(func: IRFunction, id: i64) IRBlock {
-    return func.blocks.get(id)
+    fn getBlock(self: IRFunction, id: i64) IRBlock {
+        return self.blocks.get(id)
+    }
 }
 
 // =============================================================================
@@ -389,44 +448,40 @@ struct IRModule {
     strings: List<string>,
 }
 
-fn newIRModule(name: string) IRModule {
-    const types: List<IRType> = List.new()
-    const globals: List<IRGlobal> = List.new()
-    const functions: List<IRFunction> = List.new()
-    const strings: List<string> = List.new()
-
-    return IRModule{
-        .name = name,
-        .types = types,
-        .globals = globals,
-        .functions = functions,
-        .strings = strings,
-    }
-}
-
-fn modAddFunction(mod: IRModule, func: IRFunction) i64 {
-    const id = mod.functions.len()
-    mod.functions.push(func)
-    return id
-}
-
-fn modAddGlobal(mod: IRModule, global: IRGlobal) i64 {
-    const id = mod.globals.len()
-    mod.globals.push(global)
-    return id
-}
-
-fn modAddString(mod: IRModule, s: string) i64 {
-    var i: i64 = 0
-    while (i < mod.strings.len()) {
-        if (mod.strings.get(i) == s) {
-            return i
+impl IRModule {
+    fn init(name: string) IRModule {
+        return IRModule{
+            .name = name,
+            .types = new List<IRType>,
+            .globals = new List<IRGlobal>,
+            .functions = new List<IRFunction>,
+            .strings = new List<string>,
         }
-        i = i + 1
     }
-    const id = mod.strings.len()
-    mod.strings.push(s)
-    return id
+
+    fn addFunction(self: IRModule, func: IRFunction) i64 {
+        const id = self.functions.len()
+        self.functions.push(func)
+        return id
+    }
+
+    fn addGlobal(self: IRModule, global: IRGlobal) i64 {
+        const id = self.globals.len()
+        self.globals.push(global)
+        return id
+    }
+
+    fn addString(self: IRModule, s: string) i64 {
+        // Check if string already exists
+        for i in 0..self.strings.len() {
+            if (self.strings.get(i) == s) {
+                return i
+            }
+        }
+        const id = self.strings.len()
+        self.strings.push(s)
+        return id
+    }
 }
 
 // =============================================================================
@@ -452,141 +507,215 @@ struct IRTypeRegistry {
     error_id: i64,
 }
 
-fn newIRTypeRegistry() IRTypeRegistry {
-    const types: List<IRType> = List.new()
-    var reg = IRTypeRegistry{
-        .types = types,
-        .void_id = -1,
-        .bool_id = -1,
-        .i8_id = -1,
-        .i16_id = -1,
-        .i32_id = -1,
-        .i64_id = -1,
-        .u8_id = -1,
-        .u16_id = -1,
-        .u32_id = -1,
-        .u64_id = -1,
-        .f32_id = -1,
-        .f64_id = -1,
-        .string_id = -1,
-        .char_id = -1,
-        .error_id = -1,
+impl IRTypeRegistry {
+    fn init() IRTypeRegistry {
+        var reg = IRTypeRegistry{
+            .types = new List<IRType>,
+            .void_id = -1,
+            .bool_id = -1,
+            .i8_id = -1,
+            .i16_id = -1,
+            .i32_id = -1,
+            .i64_id = -1,
+            .u8_id = -1,
+            .u16_id = -1,
+            .u32_id = -1,
+            .u64_id = -1,
+            .f32_id = -1,
+            .f64_id = -1,
+            .string_id = -1,
+            .char_id = -1,
+            .error_id = -1,
+        }
+
+        // Register primitive types
+        reg.void_id = reg.addType(IRTypeTag.Void, "void")
+        reg.bool_id = reg.addType(IRTypeTag.Bool, "bool")
+        reg.i8_id = reg.addType(IRTypeTag.I8, "i8")
+        reg.i16_id = reg.addType(IRTypeTag.I16, "i16")
+        reg.i32_id = reg.addType(IRTypeTag.I32, "i32")
+        reg.i64_id = reg.addType(IRTypeTag.I64, "i64")
+        reg.u8_id = reg.addType(IRTypeTag.U8, "u8")
+        reg.u16_id = reg.addType(IRTypeTag.U16, "u16")
+        reg.u32_id = reg.addType(IRTypeTag.U32, "u32")
+        reg.u64_id = reg.addType(IRTypeTag.U64, "u64")
+        reg.f32_id = reg.addType(IRTypeTag.F32, "f32")
+        reg.f64_id = reg.addType(IRTypeTag.F64, "f64")
+        reg.string_id = reg.addType(IRTypeTag.String, "string")
+        reg.char_id = reg.addType(IRTypeTag.Char, "char")
+        reg.error_id = reg.addType(IRTypeTag.ErrorType, "<error>")
+
+        return reg
     }
 
-    reg.void_id = irRegAddType(reg, IRTypeTag.Void, "void")
-    reg.bool_id = irRegAddType(reg, IRTypeTag.Bool, "bool")
-    reg.i8_id = irRegAddType(reg, IRTypeTag.I8, "i8")
-    reg.i16_id = irRegAddType(reg, IRTypeTag.I16, "i16")
-    reg.i32_id = irRegAddType(reg, IRTypeTag.I32, "i32")
-    reg.i64_id = irRegAddType(reg, IRTypeTag.I64, "i64")
-    reg.u8_id = irRegAddType(reg, IRTypeTag.U8, "u8")
-    reg.u16_id = irRegAddType(reg, IRTypeTag.U16, "u16")
-    reg.u32_id = irRegAddType(reg, IRTypeTag.U32, "u32")
-    reg.u64_id = irRegAddType(reg, IRTypeTag.U64, "u64")
-    reg.f32_id = irRegAddType(reg, IRTypeTag.F32, "f32")
-    reg.f64_id = irRegAddType(reg, IRTypeTag.F64, "f64")
-    reg.string_id = irRegAddType(reg, IRTypeTag.String, "string")
-    reg.char_id = irRegAddType(reg, IRTypeTag.Char, "char")
-    reg.error_id = irRegAddType(reg, IRTypeTag.ErrorType, "<error>")
+    fn addType(self: IRTypeRegistry, tag: IRTypeTag, name: string) i64 {
+        const id = self.types.len()
+        const t = IRType.init(tag, name)
+        self.types.push(t)
+        return id
+    }
 
-    return reg
+    fn getType(self: IRTypeRegistry, id: i64) IRType {
+        return self.types.get(id)
+    }
+
+    fn addPointer(self: IRTypeRegistry, inner_id: i64) i64 {
+        const inner = self.types.get(inner_id)
+        const id = self.types.len()
+        var t = IRType.init(IRTypeTag.Ptr, "*${inner.name}")
+        t.element_type_id = inner_id
+        self.types.push(t)
+        return id
+    }
+
+    fn addOptional(self: IRTypeRegistry, inner_id: i64) i64 {
+        const inner = self.types.get(inner_id)
+        const id = self.types.len()
+        var t = IRType.init(IRTypeTag.Optional, "?${inner.name}")
+        t.element_type_id = inner_id
+        self.types.push(t)
+        return id
+    }
+
+    fn addSlice(self: IRTypeRegistry, inner_id: i64) i64 {
+        const inner = self.types.get(inner_id)
+        const id = self.types.len()
+        var t = IRType.init(IRTypeTag.Slice, "[]${inner.name}")
+        t.element_type_id = inner_id
+        self.types.push(t)
+        return id
+    }
+
+    fn addArray(self: IRTypeRegistry, inner_id: i64, size: i64) i64 {
+        const inner = self.types.get(inner_id)
+        const id = self.types.len()
+        var t = IRType.init(IRTypeTag.Array, "[${size}]${inner.name}")
+        t.element_type_id = inner_id
+        t.array_size = size
+        self.types.push(t)
+        return id
+    }
+}
+
+// =============================================================================
+// Legacy Compatibility (to be removed after all callers updated)
+// =============================================================================
+
+// These functions maintain backwards compatibility during the transition.
+// They will be removed once all call sites are updated to use impl methods.
+
+fn newIRType(tag: IRTypeTag, name: string) IRType {
+    return IRType.init(tag, name)
+}
+
+fn newIRValue(id: i64, type_id: i64) IRValue {
+    return IRValue.init(id, type_id)
+}
+
+fn invalidValue() IRValue {
+    return IRValue.invalid()
+}
+
+fn newIRInst(op: IROp) IRInst {
+    return IRInst.init(op)
+}
+
+fn isTerminator(op: IROp) bool {
+    return op.isTerminator()
+}
+
+fn producesValue(op: IROp) bool {
+    return op.producesValue()
+}
+
+fn newIRBlock(id: i64, label: string) IRBlock {
+    return IRBlock.init(id, label)
+}
+
+fn blockAppend(block: IRBlock, inst: IRInst) {
+    block.append(inst)
+}
+
+fn blockIsTerminated(block: IRBlock) bool {
+    return block.isTerminated()
+}
+
+fn newIRFunction(name: string) IRFunction {
+    return IRFunction.init(name)
+}
+
+fn fnNewValue(func: IRFunction) i64 {
+    return func.newValue()
+}
+
+fn fnCreateBlock(func: IRFunction, label: string) i64 {
+    return func.createBlock(label)
+}
+
+fn fnGetBlock(func: IRFunction, id: i64) IRBlock {
+    return func.getBlock(id)
+}
+
+fn newIRModule(name: string) IRModule {
+    return IRModule.init(name)
+}
+
+fn modAddFunction(mod: IRModule, func: IRFunction) i64 {
+    return mod.addFunction(func)
+}
+
+fn modAddGlobal(mod: IRModule, global: IRGlobal) i64 {
+    return mod.addGlobal(global)
+}
+
+fn modAddString(mod: IRModule, s: string) i64 {
+    return mod.addString(s)
+}
+
+fn newIRTypeRegistry() IRTypeRegistry {
+    return IRTypeRegistry.init()
 }
 
 fn irRegAddType(reg: IRTypeRegistry, tag: IRTypeTag, name: string) i64 {
-    const id = reg.types.len()
-    const t = newIRType(tag, name)
-    reg.types.push(t)
-    return id
+    return reg.addType(tag, name)
 }
 
 fn irRegGetType(reg: IRTypeRegistry, id: i64) IRType {
-    return reg.types.get(id)
+    return reg.getType(id)
 }
 
 fn irRegAddPointer(reg: IRTypeRegistry, inner_id: i64) i64 {
-    const inner = reg.types.get(inner_id)
-    const id = reg.types.len()
-    var t = newIRType(IRTypeTag.Ptr, "*${inner.name}")
-    t.element_type_id = inner_id
-    reg.types.push(t)
-    return id
+    return reg.addPointer(inner_id)
 }
 
 fn irRegAddOptional(reg: IRTypeRegistry, inner_id: i64) i64 {
-    const inner = reg.types.get(inner_id)
-    const id = reg.types.len()
-    var t = newIRType(IRTypeTag.Optional, "?${inner.name}")
-    t.element_type_id = inner_id
-    reg.types.push(t)
-    return id
+    return reg.addOptional(inner_id)
 }
 
 fn irRegAddSlice(reg: IRTypeRegistry, inner_id: i64) i64 {
-    const inner = reg.types.get(inner_id)
-    const id = reg.types.len()
-    var t = newIRType(IRTypeTag.Slice, "[]${inner.name}")
-    t.element_type_id = inner_id
-    reg.types.push(t)
-    return id
+    return reg.addSlice(inner_id)
 }
 
 fn irRegAddArray(reg: IRTypeRegistry, inner_id: i64, size: i64) i64 {
-    const inner = reg.types.get(inner_id)
-    const id = reg.types.len()
-    var t = newIRType(IRTypeTag.Array, "[${size}]${inner.name}")
-    t.element_type_id = inner_id
-    t.array_size = size
-    reg.types.push(t)
-    return id
+    return reg.addArray(inner_id, size)
 }
 
-// =============================================================================
-// Type Predicates
-// =============================================================================
-
 fn irTypeIsInteger(t: IRType) bool {
-    switch (t.tag) {
-        IRTypeTag.I8 => { return true }
-        IRTypeTag.I16 => { return true }
-        IRTypeTag.I32 => { return true }
-        IRTypeTag.I64 => { return true }
-        IRTypeTag.U8 => { return true }
-        IRTypeTag.U16 => { return true }
-        IRTypeTag.U32 => { return true }
-        IRTypeTag.U64 => { return true }
-        else => { return false }
-    }
+    return t.isInteger()
 }
 
 fn irTypeIsFloat(t: IRType) bool {
-    switch (t.tag) {
-        IRTypeTag.F32 => { return true }
-        IRTypeTag.F64 => { return true }
-        else => { return false }
-    }
+    return t.isFloat()
 }
 
 fn irTypeIsNumeric(t: IRType) bool {
-    return irTypeIsInteger(t) or irTypeIsFloat(t)
+    return t.isNumeric()
 }
 
 fn irTypeIsSigned(t: IRType) bool {
-    switch (t.tag) {
-        IRTypeTag.I8 => { return true }
-        IRTypeTag.I16 => { return true }
-        IRTypeTag.I32 => { return true }
-        IRTypeTag.I64 => { return true }
-        IRTypeTag.F32 => { return true }
-        IRTypeTag.F64 => { return true }
-        else => { return false }
-    }
+    return t.isSigned()
 }
 
 fn irTypeIsPointer(t: IRType) bool {
-    switch (t.tag) {
-        IRTypeTag.Ptr => { return true }
-        IRTypeTag.Optional => { return true }
-        IRTypeTag.Slice => { return true }
-        else => { return false }
-    }
+    return t.isPointer()
 }

@@ -17,145 +17,145 @@ struct Parser {
     previous: Token,
     had_error: bool,
     panic_mode: bool,
+    errors: List<string>,
 }
 
 // =============================================================================
-// Parser Initialization
+// Parser Implementation
 // =============================================================================
 
-fn newParser(source: string) Parser {
-    var lex: Lexer = newLexer(source)
-    var first_token: Token = lexerScanToken(&lex)
+impl Parser {
+    // Create a new parser for the given source
+    fn create(source: string) Parser {
+        var lex: Lexer = Lexer.create(source)
+        var first_token: Token = lex.scanToken()
+        var errs = new List<string>
 
-    return Parser{
-        .lexer = lex,
-        .current = first_token,
-        .previous = first_token,
-        .had_error = false,
-        .panic_mode = false,
-    }
-}
-
-// =============================================================================
-// Token Navigation
-// =============================================================================
-
-// Advance to the next token
-fn parserAdvance(p: *Parser) {
-    p.previous = p.current
-
-    // Skip error tokens, reporting them
-    while (true) {
-        p.current = lexerScanToken(&p.lexer)
-        if (p.current.token_type != TokenType.Invalid) {
-            break
+        return Parser{
+            .lexer = lex,
+            .current = first_token,
+            .previous = first_token,
+            .had_error = false,
+            .panic_mode = false,
+            .errors = errs,
         }
-        parserErrorAtCurrent(p, p.current.lexeme)
     }
-}
 
-// Check if current token matches type
-fn parserCheck(p: *Parser, token_type: TokenType) bool {
-    println("  [parserCheck] p.current.token_type = " + string(p.current.token_type as i64))
-    println("  [parserCheck] token_type param = " + string(token_type as i64))
-    var result = p.current.token_type == token_type
-    println("  [parserCheck] result = " + string(result))
-    return result
-}
+    // Advance to the next token
+    fn advance(self: *Parser) {
+        self.previous = self.current
 
-// Check if current token matches and advance if so
-fn parserMatch(p: *Parser, token_type: TokenType) bool {
-    if (!parserCheck(p, token_type)) {
-        return false
+        // Skip error tokens, reporting them
+        while (true) {
+            self.current = self.lexer.scanToken()
+            if (self.current.token_type != TokenType.Invalid) {
+                break
+            }
+            self.errorAtCurrent(self.current.lexeme)
+        }
     }
-    parserAdvance(p)
-    return true
-}
 
-// Consume a token of expected type or error
-fn parserConsume(p: *Parser, token_type: TokenType, message: string) {
-    if (p.current.token_type == token_type) {
-        parserAdvance(p)
-        return
+    // Check if current token matches type
+    fn check(self: *Parser, token_type: TokenType) bool {
+        return self.current.token_type == token_type
     }
-    parserErrorAtCurrent(p, message)
-}
 
-// Check if we're at end of file
-fn parserIsAtEnd(p: *Parser) bool {
-    return p.current.token_type == TokenType.Eof
-}
-
-// Peek at current token type
-fn parserPeek(p: *Parser) TokenType {
-    return p.current.token_type
-}
-
-// Peek at previous token type
-fn parserPrevious(p: *Parser) TokenType {
-    return p.previous.token_type
-}
-
-// =============================================================================
-// Error Handling
-// =============================================================================
-
-fn parserErrorAt(p: *Parser, token: Token, message: string) {
-    if (p.panic_mode) {
-        return
+    // Check if current token matches and advance if so
+    fn match(self: *Parser, token_type: TokenType) bool {
+        if (!self.check(token_type)) {
+            return false
+        }
+        self.advance()
+        return true
     }
-    p.panic_mode = true
-    p.had_error = true
 
-    var loc: string = "[line ${token.line}] Error"
-
-    switch (token.token_type) {
-        TokenType.Eof => {
-            println("${loc} at end: ${message}")
+    // Consume a token of expected type or error
+    fn consume(self: *Parser, token_type: TokenType, message: string) {
+        if (self.current.token_type == token_type) {
+            self.advance()
             return
         }
-        TokenType.Invalid => {
-            println("${loc}: ${message}")
-            return
-        }
+        self.errorAtCurrent(message)
     }
-    println("${loc} at '${token.lexeme}': ${message}")
-}
 
-fn parserError(p: *Parser, message: string) {
-    parserErrorAt(p, p.previous, message)
-}
+    // Check if we're at end of file
+    fn isAtEnd(self: *Parser) bool {
+        return self.current.token_type == TokenType.Eof
+    }
 
-fn parserErrorAtCurrent(p: *Parser, message: string) {
-    parserErrorAt(p, p.current, message)
-}
+    // Peek at current token type
+    fn peek(self: *Parser) TokenType {
+        return self.current.token_type
+    }
 
-// Synchronize after an error - skip tokens until we find a statement boundary
-fn parserSynchronize(p: *Parser) {
-    p.panic_mode = false
+    // Peek at previous token type
+    fn previous(self: *Parser) TokenType {
+        return self.previous.token_type
+    }
 
-    while (!parserIsAtEnd(p)) {
-        // Synchronize on statement-ending semicolons
-        if (p.previous.token_type == TokenType.Semicolon) {
+    // =========================================================================
+    // Error Handling
+    // =========================================================================
+
+    fn errorAt(self: *Parser, token: Token, message: string) {
+        if (self.panic_mode) {
             return
         }
+        self.panic_mode = true
+        self.had_error = true
 
-        // Synchronize on statement-starting keywords
-        switch (p.current.token_type) {
-            TokenType.KwFn => { return }
-            TokenType.KwStruct => { return }
-            TokenType.KwEnum => { return }
-            TokenType.KwVar => { return }
-            TokenType.KwConst => { return }
-            TokenType.KwIf => { return }
-            TokenType.KwWhile => { return }
-            TokenType.KwFor => { return }
-            TokenType.KwReturn => { return }
-            TokenType.KwImport => { return }
-            TokenType.KwImpl => { return }
+        var loc: string = "[line " + string(token.line) + "] Error"
+        var err_msg: string = ""
+
+        switch (token.token_type) {
+            TokenType.Eof => {
+                err_msg = loc + " at end: " + message
+            }
+            TokenType.Invalid => {
+                err_msg = loc + ": " + message
+            }
         }
+        if (err_msg == "") {
+            err_msg = loc + " at '" + token.lexeme + "': " + message
+        }
+        self.errors.push(err_msg)
+    }
 
-        parserAdvance(p)
+    fn error(self: *Parser, message: string) {
+        self.errorAt(self.previous, message)
+    }
+
+    fn errorAtCurrent(self: *Parser, message: string) {
+        self.errorAt(self.current, message)
+    }
+
+    // Synchronize after an error - skip tokens until we find a statement boundary
+    fn synchronize(self: *Parser) {
+        self.panic_mode = false
+
+        while (!self.isAtEnd()) {
+            // Synchronize on statement-ending semicolons
+            if (self.previous.token_type == TokenType.Semicolon) {
+                return
+            }
+
+            // Synchronize on statement-starting keywords
+            switch (self.current.token_type) {
+                TokenType.KwFn => { return }
+                TokenType.KwStruct => { return }
+                TokenType.KwEnum => { return }
+                TokenType.KwVar => { return }
+                TokenType.KwConst => { return }
+                TokenType.KwIf => { return }
+                TokenType.KwWhile => { return }
+                TokenType.KwFor => { return }
+                TokenType.KwReturn => { return }
+                TokenType.KwImport => { return }
+                TokenType.KwImpl => { return }
+            }
+
+            self.advance()
+        }
     }
 }
 
@@ -261,431 +261,462 @@ fn getInfixPrecedence(token_type: TokenType) Precedence {
 // expression representation that returns values instead of pointers.
 // For a full AST, we'd need proper memory management.
 
-// Parse a primary expression (literals, identifiers, grouping)
-fn parsePrimaryExpr(p: *Parser) Expr {
-    var token: Token = p.current
-    var loc: SourceLoc = sourceLocFromToken(token)
+impl Parser {
+    // Parse a primary expression (literals, identifiers, grouping)
+    fn parsePrimaryExpr(self: *Parser) *Expr {
+        var token: Token = self.current
+        var loc: SourceLoc = SourceLoc.fromToken(token)
 
-    switch (token.token_type) {
-        // Integer literal
-        TokenType.IntegerLiteral => {
-            parserAdvance(p)
-            return makeIntExpr(parseInt(token.lexeme), loc)
+        switch (token.token_type) {
+            // Integer literal
+            TokenType.IntegerLiteral => {
+                self.advance()
+                return makeIntExpr(parseInt(token.lexeme), loc)
+            }
+
+            // Decimal literal
+            TokenType.DecimalLiteral => {
+                self.advance()
+                return makeDecExpr(token.lexeme, loc)
+            }
+
+            // String literal
+            TokenType.StringLiteral => {
+                self.advance()
+                return makeStrExpr(token.lexeme, loc)
+            }
+
+            // Interpolated string: "Hello ${name}!"
+            TokenType.StringInterpStart => {
+                return self.parseInterpString(loc)
+            }
+
+            // Boolean literals
+            TokenType.KwTrue => {
+                self.advance()
+                return makeBoolExpr(true, loc)
+            }
+
+            TokenType.KwFalse => {
+                self.advance()
+                return makeBoolExpr(false, loc)
+            }
+
+            // Null literal
+            TokenType.KwNull => {
+                self.advance()
+                return makeNullExpr(loc)
+            }
+
+            // Identifier (may be followed by struct init)
+            TokenType.Identifier => {
+                var name: string = token.lexeme
+                self.advance()
+
+                // Check for struct init: Type{ .field = val }
+                if (self.check(TokenType.LeftBrace)) {
+                    return self.parseStructInit(name, loc)
+                }
+
+                return makeIdentExpr(name, loc)
+            }
+
+            // Grouping expression
+            TokenType.LeftParen => {
+                self.advance()
+                var inner: *Expr = self.parseExpr()
+                self.consume(TokenType.RightParen, "Expected ')' after expression")
+                return inner
+            }
+
+            // Array init: [expr, expr, ...]
+            TokenType.LeftBracket => {
+                return self.parseArrayInit(loc)
+            }
+
+            // Lambda: |params| body
+            TokenType.Pipe => {
+                return self.parseLambdaExpr(loc)
+            }
+
+            // Unary minus
+            TokenType.Minus => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Minus, operand, loc)
+            }
+
+            // Unary not
+            TokenType.Bang => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Bang, operand, loc)
+            }
+
+            // Address-of
+            TokenType.Ampersand => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Ampersand, operand, loc)
+            }
+
+            // Unary bitwise not
+            TokenType.Tilde => {
+                self.advance()
+                var operand: *Expr = self.parsePrimaryExpr()
+                return makeUnaryExpr(TokenType.Tilde, operand, loc)
+            }
         }
 
-        // Decimal literal
-        TokenType.DecimalLiteral => {
-            parserAdvance(p)
-            return makeDecExpr(token.lexeme, loc)
+        self.errorAtCurrent("Expected expression")
+        return makeNullExpr(loc)
+    }
+
+    // Parse an expression (entry point)
+    fn parseExpr(self: *Parser) *Expr {
+        return self.parseExprPrec(Precedence.PrecAssignment)
+    }
+
+    // Parse an expression with minimum precedence (Pratt parser)
+    fn parseExprPrec(self: *Parser, min_prec: Precedence) *Expr {
+        // Parse prefix (primary expression)
+        var left: *Expr = self.parsePrimaryExpr()
+
+        // Parse infix and postfix operators while they have sufficient precedence
+        while (true) {
+            // Exit if at end of input
+            if (self.isAtEnd()) {
+                break
+            }
+
+            var loc: SourceLoc = SourceLoc.fromToken(self.current)
+
+            // Handle postfix operators (call, field access, index) at PrecCall level
+            if (precToInt(min_prec) <= precToInt(Precedence.PrecCall)) {
+                // Function call: expr(args...)
+                if (self.current.token_type == TokenType.LeftParen) {
+                    left = self.parseCallExpr(left, loc)
+                    continue
+                }
+
+                // Field access: expr.field
+                if (self.current.token_type == TokenType.Dot) {
+                    left = self.parseFieldExpr(left, loc)
+                    continue
+                }
+
+                // Index access: expr[index]
+                if (self.current.token_type == TokenType.LeftBracket) {
+                    left = self.parseIndexExpr(left, loc)
+                    continue
+                }
+
+                // Optional chaining: expr?.field
+                if (self.current.token_type == TokenType.QuestionDot) {
+                    left = self.parseOptionalFieldExpr(left, loc)
+                    continue
+                }
+
+                // Optional index: expr?[index]
+                if (self.current.token_type == TokenType.QuestionBracket) {
+                    left = self.parseOptionalIndexExpr(left, loc)
+                    continue
+                }
+
+                // Dereference: expr.*
+                if (self.current.token_type == TokenType.Dot) {
+                    // Check for .* (peek ahead after the dot)
+                    // This case is already handled by parseFieldExpr
+                }
+            }
+
+            // Handle binary infix operators
+            var op_prec: Precedence = getInfixPrecedence(self.current.token_type)
+
+            // Stop if the operator has lower precedence than our minimum
+            if (precToInt(op_prec) < precToInt(min_prec)) {
+                break
+            }
+
+            // Get the operator token and advance
+            var op_token: Token = self.current
+            self.advance()
+
+            // Handle type operators specially (as, is)
+            if (op_token.token_type == TokenType.KwAs) {
+                var target_type: *TypeRef = self.parseType()
+                left = makeCastExpr(left, target_type, loc)
+                continue
+            }
+            if (op_token.token_type == TokenType.KwIs) {
+                var check_type: *TypeRef = self.parseType()
+                left = makeTypeCheckExpr(left, check_type, loc)
+                continue
+            }
+
+            // Handle range operators: start..end or start..=end
+            if (op_token.token_type == TokenType.Range) {
+                var right: *Expr = self.parseExprPrec(intToPrec(precToInt(op_prec) + 1))
+                left = makeRangeExpr(left, right, false, loc)
+                continue
+            }
+            if (op_token.token_type == TokenType.RangeInclusive) {
+                var right: *Expr = self.parseExprPrec(intToPrec(precToInt(op_prec) + 1))
+                left = makeRangeExpr(left, right, true, loc)
+                continue
+            }
+
+            // Parse the right-hand side with higher precedence
+            // Right-associative for assignment, left-associative for others
+            var next_prec: Precedence = op_prec
+            if (op_prec != Precedence.PrecAssignment) {
+                next_prec = intToPrec(precToInt(op_prec) + 1)
+            }
+            var right: *Expr = self.parseExprPrec(next_prec)
+
+            // Build binary expression
+            left = makeBinaryExpr(op_token.token_type, left, right, loc)
         }
 
-        // String literal
-        TokenType.StringLiteral => {
-            parserAdvance(p)
-            return makeStrExpr(token.lexeme, loc)
+        return left
+    }
+
+    // Parse a function call expression: callee(arg1, arg2, ...)
+    fn parseCallExpr(self: *Parser, callee: *Expr, loc: SourceLoc) *Expr {
+        // Consume the '('
+        self.advance()
+
+        // Parse arguments into a list
+        var args = new List<*Expr>
+        while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+            if (args.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between arguments")
+            }
+            var arg: *Expr = self.parseExpr()
+            args.push(arg)
         }
 
-        // Interpolated string: "Hello ${name}!"
-        TokenType.StringInterpStart => {
-            return parseInterpString(p, loc)
+        self.consume(TokenType.RightParen, "Expected ')' after arguments")
+
+        return makeCallExpr(callee, args.to_slice(), loc)
+    }
+
+    // Parse a field access expression: object.field_name or object.*
+    fn parseFieldExpr(self: *Parser, object: *Expr, loc: SourceLoc) *Expr {
+        // Consume the '.'
+        self.advance()
+
+        // Check for dereference: expr.*
+        if (self.check(TokenType.Star)) {
+            self.advance()
+            return makeDerefExpr(object, loc)
         }
 
-        // Boolean literals
-        TokenType.KwTrue => {
-            parserAdvance(p)
-            return makeBoolExpr(true, loc)
-        }
-
-        TokenType.KwFalse => {
-            parserAdvance(p)
-            return makeBoolExpr(false, loc)
-        }
-
-        // Null literal
-        TokenType.KwNull => {
-            parserAdvance(p)
+        // Expect field name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected field name after '.'")
             return makeNullExpr(loc)
         }
 
-        // Identifier (may be followed by struct init)
-        TokenType.Identifier => {
-            var name: string = token.lexeme
-            parserAdvance(p)
+        var field_name: string = self.current.lexeme
+        self.advance()
 
-            // Check for struct init: Type{ .field = val }
-            if (parserCheck(p, TokenType.LeftBrace)) {
-                return parseStructInit(p, name, loc)
+        return makeFieldExpr(object, field_name, loc)
+    }
+
+    // Parse an index expression: object[index]
+    fn parseIndexExpr(self: *Parser, object: *Expr, loc: SourceLoc) *Expr {
+        // Consume the '['
+        self.advance()
+
+        // Parse index expression
+        var index: *Expr = self.parseExpr()
+
+        // Check for slice expression: object[start..end]
+        if (self.check(TokenType.Range) or self.check(TokenType.RangeInclusive)) {
+            var inclusive: bool = self.check(TokenType.RangeInclusive)
+            self.advance()
+            var end: *Expr = self.parseExpr()
+            self.consume(TokenType.RightBracket, "Expected ']' after slice")
+            return makeSliceExpr(object, index, end, inclusive, loc)
+        }
+
+        self.consume(TokenType.RightBracket, "Expected ']' after index")
+
+        return makeIndexExpr(object, index, loc)
+    }
+
+    // Parse optional field access: object?.field
+    fn parseOptionalFieldExpr(self: *Parser, object: *Expr, loc: SourceLoc) *Expr {
+        // Consume the '?.'
+        self.advance()
+
+        // Expect field name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected field name after '?.'")
+            return makeNullExpr(loc)
+        }
+
+        var field_name: string = self.current.lexeme
+        self.advance()
+
+        return makeOptionalFieldExpr(object, field_name, loc)
+    }
+
+    // Parse optional index access: object?[index]
+    fn parseOptionalIndexExpr(self: *Parser, object: *Expr, loc: SourceLoc) *Expr {
+        // Consume the '?['
+        self.advance()
+
+        // Parse index expression
+        var index: *Expr = self.parseExpr()
+
+        self.consume(TokenType.RightBracket, "Expected ']' after index")
+
+        return makeOptionalIndexExpr(object, index, loc)
+    }
+
+    // Parse struct initialization: Type{ .field = val, ... }
+    fn parseStructInit(self: *Parser, type_name: string, loc: SourceLoc) *Expr {
+        // Consume the '{'
+        self.advance()
+
+        var field_inits = new List<FieldInit>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            if (field_inits.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between field initializers")
             }
 
-            return makeIdentExpr(name, loc)
+            // Expect .field = value
+            self.consume(TokenType.Dot, "Expected '.' before field name")
+
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected field name")
+                break
+            }
+            var field_name: string = self.current.lexeme
+            var field_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            self.consume(TokenType.Equals, "Expected '=' after field name")
+
+            var value: *Expr = self.parseExpr()
+            field_inits.push(FieldInit{
+                .name = field_name,
+                .value = value,
+                .loc = field_loc,
+            })
         }
 
-        // Grouping expression
-        TokenType.LeftParen => {
-            parserAdvance(p)
-            var inner: Expr = parseExpr(p)
-            parserConsume(p, TokenType.RightParen, "Expected ')' after expression")
-            return inner
-        }
+        self.consume(TokenType.RightBrace, "Expected '}' after struct initializer")
 
-        // Array init: [expr, expr, ...]
-        TokenType.LeftBracket => {
-            return parseArrayInit(p, loc)
-        }
-
-        // Lambda: |params| body
-        TokenType.Pipe => {
-            return parseLambdaExpr(p, loc)
-        }
-
-        // Unary minus
-        TokenType.Minus => {
-            parserAdvance(p)
-            var operand: Expr = parsePrimaryExpr(p)
-            return makeUnaryExpr(TokenType.Minus, operand, loc)
-        }
-
-        // Unary not
-        TokenType.Bang => {
-            parserAdvance(p)
-            var operand: Expr = parsePrimaryExpr(p)
-            return makeUnaryExpr(TokenType.Bang, operand, loc)
-        }
-
-        // Address-of
-        TokenType.Ampersand => {
-            parserAdvance(p)
-            var operand: Expr = parsePrimaryExpr(p)
-            return makeUnaryExpr(TokenType.Ampersand, operand, loc)
-        }
-
-        // Unary bitwise not
-        TokenType.Tilde => {
-            parserAdvance(p)
-            var operand: Expr = parsePrimaryExpr(p)
-            return makeUnaryExpr(TokenType.Tilde, operand, loc)
-        }
+        // Create a simple named type ref for the struct type
+        var type_ref: *TypeRef = makeNamedTypeRef(type_name, loc)
+        return makeStructInitExpr(type_ref, field_inits.to_slice(), loc)
     }
 
-    parserErrorAtCurrent(p, "Expected expression")
-    return makeNullExpr(loc)
-}
+    // Parse array initialization: [expr, expr, ...]
+    fn parseArrayInit(self: *Parser, loc: SourceLoc) *Expr {
+        // Consume the '['
+        self.advance()
 
-// Parse an expression (entry point)
-fn parseExpr(p: *Parser) Expr {
-    return parseExprPrec(p, Precedence.PrecAssignment)
-}
-
-// Parse an expression with minimum precedence (Pratt parser)
-fn parseExprPrec(p: *Parser, min_prec: Precedence) Expr {
-    // Parse prefix (primary expression)
-    var left: Expr = parsePrimaryExpr(p)
-
-    // Parse infix and postfix operators while they have sufficient precedence
-    while (true) {
-        // Exit if at end of input
-        if (parserIsAtEnd(p)) {
-            break
-        }
-
-        var loc: SourceLoc = sourceLocFromToken(p.current)
-
-        // Handle postfix operators (call, field access, index) at PrecCall level
-        if (precToInt(min_prec) <= precToInt(Precedence.PrecCall)) {
-            // Function call: expr(args...)
-            if (p.current.token_type == TokenType.LeftParen) {
-                left = parseCallExpr(p, left, loc)
-                continue
+        var elements = new List<*Expr>
+        while (!self.check(TokenType.RightBracket) and !self.isAtEnd()) {
+            if (elements.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between array elements")
             }
 
-            // Field access: expr.field
-            if (p.current.token_type == TokenType.Dot) {
-                left = parseFieldExpr(p, left, loc)
-                continue
+            var elem: *Expr = self.parseExpr()
+            elements.push(elem)
+        }
+
+        self.consume(TokenType.RightBracket, "Expected ']' after array elements")
+
+        return makeArrayInitExpr(elements.to_slice(), loc)
+    }
+
+    // Parse lambda expression: |params| body or |params| { stmts }
+    fn parseLambdaExpr(self: *Parser, loc: SourceLoc) *Expr {
+        // Consume the opening '|'
+        self.advance()
+
+        // Parse parameters
+        var params = new List<Param>
+        while (!self.check(TokenType.Pipe) and !self.isAtEnd()) {
+            if (params.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between lambda parameters")
             }
 
-            // Index access: expr[index]
-            if (p.current.token_type == TokenType.LeftBracket) {
-                left = parseIndexExpr(p, left, loc)
-                continue
+            // Parameter name
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected parameter name")
+                break
+            }
+            var param_name: string = self.current.lexeme
+            var param_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            // Optional type annotation
+            var param_type: ?*TypeRef = null
+            if (self.match(TokenType.Colon)) {
+                param_type = self.parseType()
             }
 
-            // Optional chaining: expr?.field
-            if (p.current.token_type == TokenType.QuestionDot) {
-                left = parseOptionalFieldExpr(p, left, loc)
-                continue
-            }
-
-            // Optional index: expr?[index]
-            if (p.current.token_type == TokenType.QuestionBracket) {
-                left = parseOptionalIndexExpr(p, left, loc)
-                continue
-            }
-
-            // Dereference: expr.*
-            if (p.current.token_type == TokenType.Dot) {
-                // Check for .* (peek ahead after the dot)
-                // This case is already handled by parseFieldExpr
-            }
+            params.push(Param{
+                .name = param_name,
+                .param_type = param_type,
+                .loc = param_loc,
+            })
         }
 
-        // Handle binary infix operators
-        var op_prec: Precedence = getInfixPrecedence(p.current.token_type)
+        self.consume(TokenType.Pipe, "Expected '|' after lambda parameters")
 
-        // Stop if the operator has lower precedence than our minimum
-        if (precToInt(op_prec) < precToInt(min_prec)) {
-            break
-        }
-
-        // Get the operator token and advance
-        var op_token: Token = p.current
-        parserAdvance(p)
-
-        // Handle type operators specially (as, is)
-        if (op_token.token_type == TokenType.KwAs) {
-            var target_type: TypeRef = parseType(p)
-            left = makeCastExpr(left, target_type, loc)
-            continue
-        }
-        if (op_token.token_type == TokenType.KwIs) {
-            var check_type: TypeRef = parseType(p)
-            left = makeTypeCheckExpr(left, check_type, loc)
-            continue
-        }
-
-        // Parse the right-hand side with higher precedence
-        // Right-associative for assignment, left-associative for others
-        var next_prec: Precedence = op_prec
-        if (op_prec != Precedence.PrecAssignment) {
-            next_prec = intToPrec(precToInt(op_prec) + 1)
-        }
-        var right: Expr = parseExprPrec(p, next_prec)
-
-        // Build binary expression
-        left = makeBinaryExpr(op_token.token_type, left, right, loc)
-    }
-
-    return left
-}
-
-// Parse a function call expression: callee(arg1, arg2, ...)
-fn parseCallExpr(p: *Parser, callee: Expr, loc: SourceLoc) Expr {
-    // Consume the '('
-    parserAdvance(p)
-
-    // Parse arguments
-    var arg_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightParen) and !parserIsAtEnd(p)) {
-        if (arg_count > 0) {
-            parserConsume(p, TokenType.Comma, "Expected ',' between arguments")
-        }
-        var arg: Expr = parseExpr(p)
-        arg_count = arg_count + 1
-        // Note: We're not storing args since we can't allocate pointers yet
-    }
-
-    parserConsume(p, TokenType.RightParen, "Expected ')' after arguments")
-
-    return makeCallExpr(callee, arg_count, loc)
-}
-
-// Parse a field access expression: object.field_name or object.*
-fn parseFieldExpr(p: *Parser, object: Expr, loc: SourceLoc) Expr {
-    // Consume the '.'
-    parserAdvance(p)
-
-    // Check for dereference: expr.*
-    if (parserCheck(p, TokenType.Star)) {
-        parserAdvance(p)
-        return makeDerefExpr(object, loc)
-    }
-
-    // Expect field name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected field name after '.'")
-        return makeNullExpr(loc)
-    }
-
-    var field_name: string = p.current.lexeme
-    parserAdvance(p)
-
-    return makeFieldExpr(object, field_name, loc)
-}
-
-// Parse an index expression: object[index]
-fn parseIndexExpr(p: *Parser, object: Expr, loc: SourceLoc) Expr {
-    // Consume the '['
-    parserAdvance(p)
-
-    // Parse index expression
-    var index: Expr = parseExpr(p)
-
-    // Check for slice expression: object[start..end]
-    if (parserCheck(p, TokenType.Range) or parserCheck(p, TokenType.RangeInclusive)) {
-        var inclusive: bool = parserCheck(p, TokenType.RangeInclusive)
-        parserAdvance(p)
-        var end: Expr = parseExpr(p)
-        parserConsume(p, TokenType.RightBracket, "Expected ']' after slice")
-        return makeSliceExpr(object, index, end, inclusive, loc)
-    }
-
-    parserConsume(p, TokenType.RightBracket, "Expected ']' after index")
-
-    return makeIndexExpr(object, index, loc)
-}
-
-// Parse optional field access: object?.field
-fn parseOptionalFieldExpr(p: *Parser, object: Expr, loc: SourceLoc) Expr {
-    // Consume the '?.'
-    parserAdvance(p)
-
-    // Expect field name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected field name after '?.'")
-        return makeNullExpr(loc)
-    }
-
-    var field_name: string = p.current.lexeme
-    parserAdvance(p)
-
-    return makeOptionalFieldExpr(object, field_name, loc)
-}
-
-// Parse optional index access: object?[index]
-fn parseOptionalIndexExpr(p: *Parser, object: Expr, loc: SourceLoc) Expr {
-    // Consume the '?['
-    parserAdvance(p)
-
-    // Parse index expression
-    var index: Expr = parseExpr(p)
-
-    parserConsume(p, TokenType.RightBracket, "Expected ']' after index")
-
-    return makeOptionalIndexExpr(object, index, loc)
-}
-
-// Parse struct initialization: Type{ .field = val, ... }
-fn parseStructInit(p: *Parser, type_name: string, loc: SourceLoc) Expr {
-    // Consume the '{'
-    parserAdvance(p)
-
-    var field_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        if (field_count > 0) {
-            parserConsume(p, TokenType.Comma, "Expected ',' between field initializers")
-        }
-
-        // Expect .field = value
-        parserConsume(p, TokenType.Dot, "Expected '.' before field name")
-
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected field name")
-            break
-        }
-        var field_name: string = p.current.lexeme
-        parserAdvance(p)
-
-        parserConsume(p, TokenType.Equals, "Expected '=' after field name")
-
-        var value: Expr = parseExpr(p)
-        field_count = field_count + 1
-    }
-
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after struct initializer")
-
-    return makeStructInitExpr(type_name, field_count, loc)
-}
-
-// Parse array initialization: [expr, expr, ...]
-fn parseArrayInit(p: *Parser, loc: SourceLoc) Expr {
-    // Consume the '['
-    parserAdvance(p)
-
-    var elem_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBracket) and !parserIsAtEnd(p)) {
-        if (elem_count > 0) {
-            parserConsume(p, TokenType.Comma, "Expected ',' between array elements")
-        }
-
-        var elem: Expr = parseExpr(p)
-        elem_count = elem_count + 1
-    }
-
-    parserConsume(p, TokenType.RightBracket, "Expected ']' after array elements")
-
-    return makeArrayInitExpr(elem_count, loc)
-}
-
-// Parse lambda expression: |params| body or |params| { stmts }
-fn parseLambdaExpr(p: *Parser, loc: SourceLoc) Expr {
-    // Consume the opening '|'
-    parserAdvance(p)
-
-    // Parse parameters
-    var param_count: i64 = 0
-    while (!parserCheck(p, TokenType.Pipe) and !parserIsAtEnd(p)) {
-        if (param_count > 0) {
-            parserConsume(p, TokenType.Comma, "Expected ',' between lambda parameters")
-        }
-
-        // Parameter name
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected parameter name")
-            break
-        }
-        var param_name: string = p.current.lexeme
-        parserAdvance(p)
-
-        // Optional type annotation
-        if (parserMatch(p, TokenType.Colon)) {
-            var param_type: TypeRef = parseType(p)
-        }
-
-        param_count = param_count + 1
-    }
-
-    parserConsume(p, TokenType.Pipe, "Expected '|' after lambda parameters")
-
-    // Parse body - either a block or a single expression
-    if (parserCheck(p, TokenType.LeftBrace)) {
-        var body: Stmt = parseBlock(p)
-    } else {
-        var body_expr: Expr = parseExpr(p)
-    }
-
-    return makeLambdaExpr(param_count, loc)
-}
-
-// Parse an interpolated string: "Hello ${name}!"
-// Token stream: StringInterpStart, (StringContent | InterpExprStart expr InterpExprEnd)*, StringInterpEnd
-fn parseInterpString(p: *Parser, loc: SourceLoc) Expr {
-    // Consume the opening quote (StringInterpStart)
-    parserAdvance(p)
-
-    var part_count: i64 = 0
-
-    // Parse parts until we hit the closing quote
-    while (!parserCheck(p, TokenType.StringInterpEnd) and !parserIsAtEnd(p)) {
-        if (parserCheck(p, TokenType.StringContent)) {
-            // Literal string part
-            var content: string = p.current.lexeme
-            parserAdvance(p)
-            part_count = part_count + 1
-        } else if (parserCheck(p, TokenType.InterpExprStart)) {
-            // Expression part: parse until InterpExprEnd
-            parserAdvance(p)  // consume ${
-            var expr: Expr = parseExpr(p)
-            parserConsume(p, TokenType.InterpExprEnd, "Expected '}' after interpolation expression")
-            part_count = part_count + 1
+        // Parse body - either a block or a single expression
+        var body: *Expr = makeNullExpr(loc)  // Default if parsing fails
+        if (self.check(TokenType.LeftBrace)) {
+            // Block body - wrap it in a block expression
+            var block_stmt: *Stmt = self.parseBlock()
+            // For lambda with block body, we use a block expression
+            body = makeBlockExpr(block_stmt, loc)
         } else {
-            parserErrorAtCurrent(p, "Expected string content or interpolation expression")
-            break
+            body = self.parseExpr()
         }
+
+        return makeLambdaExpr(params.to_slice(), body, loc)
     }
 
-    parserConsume(p, TokenType.StringInterpEnd, "Expected closing '\"' for interpolated string")
+    // Parse an interpolated string: "Hello ${name}!"
+    // Token stream: StringInterpStart, (StringContent | InterpExprStart expr InterpExprEnd)*, StringInterpEnd
+    fn parseInterpString(self: *Parser, loc: SourceLoc) *Expr {
+        // Consume the opening quote (StringInterpStart)
+        self.advance()
 
-    return makeInterpStringExpr(part_count, loc)
+        var elements = new List<*Expr>
+
+        // Parse parts until we hit the closing quote
+        while (!self.check(TokenType.StringInterpEnd) and !self.isAtEnd()) {
+            if (self.check(TokenType.StringContent)) {
+                // Literal string part - create a string expression
+                var content: string = self.current.lexeme
+                var content_loc: SourceLoc = SourceLoc.fromToken(self.current)
+                self.advance()
+                elements.push(makeStrExpr(content, content_loc))
+            } else if (self.check(TokenType.InterpExprStart)) {
+                // Expression part: parse until InterpExprEnd
+                self.advance()  // consume ${
+                var expr: *Expr = self.parseExpr()
+                self.consume(TokenType.InterpExprEnd, "Expected '}' after interpolation expression")
+                elements.push(expr)
+            } else {
+                self.errorAtCurrent("Expected string content or interpolation expression")
+                break
+            }
+        }
+
+        self.consume(TokenType.StringInterpEnd, "Expected closing '\"' for interpolated string")
+
+        return makeInterpStringExpr(elements.to_slice(), loc)
+    }
 }
 
 // Convert precedence enum to integer for comparison
@@ -742,13 +773,13 @@ fn intToPrec(i: i64) Precedence {
 // =============================================================================
 
 // Helper to create an Expr with all default/null values
-fn makeDefaultExpr(kind: ExprKind, loc: SourceLoc) Expr {
+fn makeDefaultExpr(kind: ExprKind, loc: SourceLoc) *Expr {
     var empty_exprs: []*Expr = []
     var empty_stmts: []*Stmt = []
     var empty_field_inits: []FieldInit = []
     var empty_params: []Param = []
 
-    return Expr{
+    return new Expr{
         .kind = kind,
         .loc = loc,
         .int_value = 0,
@@ -784,150 +815,229 @@ fn makeDefaultExpr(kind: ExprKind, loc: SourceLoc) Expr {
     }
 }
 
-fn makeIntExpr(value: i64, loc: SourceLoc) Expr {
+fn makeIntExpr(value: i64, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.IntLiteral, loc)
     e.int_value = value
     return e
 }
 
-fn makeDecExpr(value: string, loc: SourceLoc) Expr {
+fn makeDecExpr(value: string, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.DecLiteral, loc)
     e.dec_value = value
     return e
 }
 
-fn makeStrExpr(value: string, loc: SourceLoc) Expr {
+fn makeStrExpr(value: string, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.StrLiteral, loc)
     e.str_value = value
     return e
 }
 
-fn makeBoolExpr(value: bool, loc: SourceLoc) Expr {
+fn makeBoolExpr(value: bool, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.BoolLiteral, loc)
     e.bool_value = value
     return e
 }
 
-fn makeNullExpr(loc: SourceLoc) Expr {
+fn makeNullExpr(loc: SourceLoc) *Expr {
     return makeDefaultExpr(ExprKind.NullLiteral, loc)
 }
 
-fn makeIdentExpr(name: string, loc: SourceLoc) Expr {
+fn makeIdentExpr(name: string, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.IdentifierExpr, loc)
     e.name = name
     return e
 }
 
-fn makeUnaryExpr(op: TokenType, operand: Expr, loc: SourceLoc) Expr {
+fn makeUnaryExpr(op: TokenType, operand: *Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.UnaryExpr, loc)
     e.op = op
-    // TODO: Need to store operand somehow
+    e.operand = operand
     return e
 }
 
-fn makeBinaryExpr(op: TokenType, left: Expr, right: Expr, loc: SourceLoc) Expr {
+fn makeBinaryExpr(op: TokenType, left: *Expr, right: *Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.BinaryExpr, loc)
     e.op = op
-    // TODO: Need to store left and right somehow
+    e.left = left
+    e.right = right
     return e
 }
 
-fn makeCallExpr(callee: Expr, arg_count: i64, loc: SourceLoc) Expr {
+fn makeCallExpr(callee: *Expr, args: []*Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.CallExpr, loc)
-    e.int_value = arg_count  // Store arg count here temporarily
-    // TODO: Need to store callee somehow
+    e.callee = callee
+    e.args = args
     return e
 }
 
-fn makeFieldExpr(object: Expr, field_name: string, loc: SourceLoc) Expr {
+fn makeFieldExpr(object: *Expr, field_name: string, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.FieldExpr, loc)
     e.field_name = field_name
-    // TODO: Need to store object somehow
+    e.object = object
     return e
 }
 
-fn makeIndexExpr(object: Expr, index: Expr, loc: SourceLoc) Expr {
+fn makeIndexExpr(object: *Expr, index: *Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.IndexExpr, loc)
-    // TODO: Need to store object and index somehow
+    e.object = object
+    e.index = index
     return e
 }
 
-fn makeDerefExpr(operand: Expr, loc: SourceLoc) Expr {
+fn makeDerefExpr(operand: *Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.UnaryExpr, loc)
     e.op = TokenType.Star  // .* dereference uses Star token
-    // TODO: Need to store operand somehow
+    e.operand = operand
     return e
 }
 
-fn makeSliceExpr(object: Expr, start: Expr, end: Expr, inclusive: bool, loc: SourceLoc) Expr {
+fn makeSliceExpr(object: *Expr, start: *Expr, end: *Expr, inclusive: bool, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.SliceExpr, loc)
     e.range_inclusive = inclusive
-    // TODO: Need to store object, start, end somehow
+    e.object = object
+    e.slice_start = start
+    e.slice_end = end
     return e
 }
 
-fn makeOptionalFieldExpr(object: Expr, field_name: string, loc: SourceLoc) Expr {
+fn makeOptionalFieldExpr(object: *Expr, field_name: string, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.FieldExpr, loc)
     e.field_name = field_name
     e.bool_value = true  // Flag to indicate optional access
-    // TODO: Need to store object somehow
+    e.object = object
     return e
 }
 
-fn makeOptionalIndexExpr(object: Expr, index: Expr, loc: SourceLoc) Expr {
+fn makeOptionalIndexExpr(object: *Expr, index: *Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.IndexExpr, loc)
     e.bool_value = true  // Flag to indicate optional access
-    // TODO: Need to store object and index somehow
+    e.object = object
+    e.index = index
     return e
 }
 
-fn makeRangeExpr(start: Expr, end: Expr, inclusive: bool, loc: SourceLoc) Expr {
+fn makeRangeExpr(start: ?*Expr, end: ?*Expr, inclusive: bool, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.RangeExpr, loc)
     e.range_inclusive = inclusive
-    // TODO: Need to store start and end somehow
+    e.range_start = start
+    e.range_end = end
     return e
 }
 
-fn makeCastExpr(expr: Expr, target_type: TypeRef, loc: SourceLoc) Expr {
+fn makeCastExpr(expr: *Expr, target_type: *TypeRef, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.CastExpr, loc)
-    // TODO: Need to store expr and target_type somehow
+    e.operand = expr
+    e.cast_type = target_type
     return e
 }
 
-fn makeTypeCheckExpr(expr: Expr, check_type: TypeRef, loc: SourceLoc) Expr {
+fn makeTypeCheckExpr(expr: *Expr, check_type: *TypeRef, loc: SourceLoc) *Expr {
     // Use a binary expr with KwIs as the operator
     var e = makeDefaultExpr(ExprKind.BinaryExpr, loc)
     e.op = TokenType.KwIs
-    // TODO: Need to store expr and check_type somehow
+    e.left = expr
+    e.cast_type = check_type  // Store the type in cast_type field
     return e
 }
 
-fn makeStructInitExpr(type_name: string, field_count: i64, loc: SourceLoc) Expr {
+fn makeStructInitExpr(type_ref: *TypeRef, field_inits: []FieldInit, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.StructInitExpr, loc)
-    e.name = type_name
-    e.int_value = field_count  // Store field count temporarily
-    // TODO: Need to store field initializers somehow
+    e.struct_type = type_ref
+    e.field_inits = field_inits
     return e
 }
 
-fn makeArrayInitExpr(elem_count: i64, loc: SourceLoc) Expr {
+fn makeArrayInitExpr(elements: []*Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.ArrayInitExpr, loc)
-    e.int_value = elem_count  // Store element count temporarily
-    // TODO: Need to store elements somehow
+    e.elements = elements
     return e
 }
 
-fn makeLambdaExpr(param_count: i64, loc: SourceLoc) Expr {
+fn makeLambdaExpr(params: []Param, body: *Expr, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.LambdaExpr, loc)
-    e.int_value = param_count  // Store param count temporarily
-    // TODO: Need to store params and body somehow
+    e.params = params
+    e.body = body
     return e
 }
 
-fn makeInterpStringExpr(part_count: i64, loc: SourceLoc) Expr {
+fn makeBlockExpr(block_stmt: *Stmt, loc: SourceLoc) *Expr {
+    var e = makeDefaultExpr(ExprKind.BlockExpr, loc)
+    e.stmts = block_stmt.block_stmts
+    return e
+}
+
+// =============================================================================
+// TypeRef Constructors
+// =============================================================================
+
+fn makeDefaultTypeRef(kind: TypeKind, loc: SourceLoc) *TypeRef {
+    var empty_types: []*TypeRef = []
+    return new TypeRef{
+        .kind = kind,
+        .loc = loc,
+        .name = "",
+        .inner = null,
+        .array_size = 0,
+        .param_types = empty_types,
+        .return_type = null,
+        .type_args = empty_types,
+    }
+}
+
+fn makeNamedTypeRef(name: string, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Named, loc)
+    t.name = name
+    return t
+}
+
+fn makePointerTypeRef(inner: *TypeRef, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Pointer, loc)
+    t.inner = inner
+    return t
+}
+
+fn makeOptionalTypeRef(inner: *TypeRef, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Optional, loc)
+    t.inner = inner
+    return t
+}
+
+fn makeArrayTypeRef(inner: *TypeRef, size: i64, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Array, loc)
+    t.inner = inner
+    t.array_size = size
+    return t
+}
+
+fn makeSliceTypeRef(inner: *TypeRef, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Slice, loc)
+    t.inner = inner
+    return t
+}
+
+fn makeFunctionTypeRef(param_types: []*TypeRef, return_type: ?*TypeRef, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Function, loc)
+    t.param_types = param_types
+    t.return_type = return_type
+    return t
+}
+
+fn makeGenericTypeRef(name: string, type_args: []*TypeRef, loc: SourceLoc) *TypeRef {
+    var t = makeDefaultTypeRef(TypeKind.Generic, loc)
+    t.name = name
+    t.type_args = type_args
+    return t
+}
+
+fn makeInferredTypeRef(loc: SourceLoc) *TypeRef {
+    return makeDefaultTypeRef(TypeKind.Inferred, loc)
+}
+
+fn makeInterpStringExpr(elements: []*Expr, loc: SourceLoc) *Expr {
+    // elements alternates between string literal exprs and interpolated exprs
     var e = makeDefaultExpr(ExprKind.InterpStringExpr, loc)
-    e.int_value = part_count  // Store part count temporarily
-    // TODO: Need to store parts (alternating string/expr) somehow
+    e.elements = elements
     return e
 }
 
@@ -936,14 +1046,14 @@ fn makeInterpStringExpr(part_count: i64, loc: SourceLoc) Expr {
 // =============================================================================
 
 // Helper to create a Stmt with all default/null values
-fn makeDefaultStmt(kind: StmtKind, loc: SourceLoc) Stmt {
+fn makeDefaultStmt(kind: StmtKind, loc: SourceLoc) *Stmt {
     var empty_stmts: []*Stmt = []
     var empty_fields: []Field = []
     var empty_variants: []EnumVariant = []
     var empty_params: []Param = []
     var empty_arms: []SwitchArm = []
 
-    return Stmt{
+    return new Stmt{
         .kind = kind,
         .loc = loc,
         .expr = null,
@@ -1004,618 +1114,676 @@ fn makeDefaultStmt(kind: StmtKind, loc: SourceLoc) Stmt {
 // Statement Parsing
 // =============================================================================
 
-// Parse a statement (main dispatch)
-fn parseStatement(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
+impl Parser {
+    // Parse a statement (main dispatch)
+    fn parseStatement(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
 
-    // Dispatch based on leading keyword
-    switch (p.current.token_type) {
-        // Visibility modifier
-        TokenType.KwPub => {
-            return parsePubDecl(p)
-        }
-
-        // Declarations
-        TokenType.KwFn => {
-            return parseFunctionDecl(p)
-        }
-        TokenType.KwStruct => {
-            return parseStructDecl(p)
-        }
-        TokenType.KwEnum => {
-            return parseEnumDecl(p)
-        }
-        TokenType.KwImpl => {
-            return parseImplDecl(p)
-        }
-        TokenType.KwImport => {
-            return parseImportStmt(p)
-        }
-
-        // Variable declarations
-        TokenType.KwVar => {
-            return parseVarDecl(p)
-        }
-        TokenType.KwConst => {
-            return parseConstDecl(p)
-        }
-
-        // Control flow
-        TokenType.KwReturn => {
-            return parseReturnStmt(p)
-        }
-        TokenType.KwIf => {
-            return parseIfStmt(p)
-        }
-        TokenType.KwWhile => {
-            return parseWhileStmt(p)
-        }
-        TokenType.KwFor => {
-            return parseForStmt(p)
-        }
-        TokenType.KwSwitch => {
-            return parseSwitchStmt(p)
-        }
-        TokenType.KwLoop => {
-            return parseLoopStmt(p)
-        }
-        TokenType.KwDefer => {
-            return parseDeferStmt(p)
-        }
-        TokenType.KwTry => {
-            return parseTryStmt(p)
-        }
-        TokenType.KwThrow => {
-            return parseThrowStmt(p)
-        }
-        TokenType.KwTest => {
-            return parseTestDecl(p)
-        }
-        TokenType.KwUnion => {
-            return parseUnionDecl(p)
-        }
-        TokenType.KwType => {
-            return parseTypeAliasDecl(p)
-        }
-        TokenType.KwView => {
-            return parseViewDecl(p)
-        }
-        TokenType.KwTrait => {
-            return parseTraitDecl(p)
-        }
-        TokenType.KwComptime => {
-            return parseComptimeStmt(p)
-        }
-        TokenType.KwBreak => {
-            parserAdvance(p)
-            return makeBreakStmt(loc)
-        }
-        TokenType.KwContinue => {
-            parserAdvance(p)
-            return makeContinueStmt(loc)
-        }
-        TokenType.LeftBrace => {
-            return parseBlock(p)
-        }
-    }
-
-    // Default: expression statement
-    return parseExpressionStmt(p)
-}
-
-// Parse a pub declaration: pub fn/struct/enum/const/var
-fn parsePubDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwPub, "Expected 'pub'")
-
-    // Parse the actual declaration and mark it as public
-    var stmt: Stmt = parseStatement(p)
-    stmt.fn_public = true  // Mark as public (reuse fn_public for all decls)
-    return stmt
-}
-
-// Parse a variable declaration: var name: Type = expr
-fn parseVarDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwVar, "Expected 'var'")
-
-    // Get variable name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected variable name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Optional type annotation
-    var has_type: bool = false
-    if (parserMatch(p, TokenType.Colon)) {
-        var var_type: TypeRef = parseType(p)
-        has_type = true
-    }
-
-    // Optional initializer
-    var has_init: bool = false
-    if (parserMatch(p, TokenType.Equals)) {
-        var init_expr: Expr = parseExpr(p)
-        has_init = true
-    }
-
-    return makeVarDeclStmt(name, true, loc)
-}
-
-// Parse a constant declaration: const name: Type = expr
-fn parseConstDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwConst, "Expected 'const'")
-
-    // Get constant name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected constant name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Optional type annotation
-    if (parserMatch(p, TokenType.Colon)) {
-        var const_type: TypeRef = parseType(p)
-    }
-
-    // Required initializer for const
-    parserConsume(p, TokenType.Equals, "Expected '=' after constant name")
-    var init_expr: Expr = parseExpr(p)
-
-    return makeVarDeclStmt(name, false, loc)
-}
-
-// Parse a return statement: return expr
-fn parseReturnStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwReturn, "Expected 'return'")
-
-    // Optional return value
-    if (parserCheck(p, TokenType.RightBrace) or parserCheck(p, TokenType.Semicolon) or parserIsAtEnd(p)) {
-        return makeReturnStmt(loc)
-    }
-
-    var value: Expr = parseExpr(p)
-    return makeReturnStmt(loc)
-}
-
-// Parse an if statement: if (cond) { then } else { else }
-fn parseIfStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwIf, "Expected 'if'")
-
-    // Condition (parentheses required)
-    parserConsume(p, TokenType.LeftParen, "Expected '(' after 'if'")
-    var cond: Expr = parseExpr(p)
-    parserConsume(p, TokenType.RightParen, "Expected ')' after if condition")
-
-    // Then branch
-    var then_branch: Stmt = parseBlock(p)
-
-    // Optional else branch
-    var has_else: bool = false
-    if (parserMatch(p, TokenType.KwElse)) {
-        // Check for else if
-        if (parserCheck(p, TokenType.KwIf)) {
-            var else_branch: Stmt = parseIfStmt(p)
-            has_else = true
-        } else {
-            var else_branch: Stmt = parseBlock(p)
-            has_else = true
-        }
-    }
-
-    return makeIfStmt(loc)
-}
-
-// Parse a while loop: while (cond) { body }
-fn parseWhileStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwWhile, "Expected 'while'")
-
-    // Condition (parentheses required)
-    parserConsume(p, TokenType.LeftParen, "Expected '(' after 'while'")
-    var cond: Expr = parseExpr(p)
-    parserConsume(p, TokenType.RightParen, "Expected ')' after while condition")
-
-    // Body
-    var body: Stmt = parseBlock(p)
-
-    return makeWhileStmt(loc)
-}
-
-// Parse a for loop: for (item in iter) { body }
-fn parseForStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwFor, "Expected 'for'")
-
-    // Loop variable (parentheses optional but we'll require them for now)
-    parserConsume(p, TokenType.LeftParen, "Expected '(' after 'for'")
-
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected loop variable name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var var_name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // 'in' keyword
-    parserConsume(p, TokenType.KwIn, "Expected 'in' after loop variable")
-
-    // Iterator expression
-    var iter: Expr = parseExpr(p)
-
-    parserConsume(p, TokenType.RightParen, "Expected ')' after for clause")
-
-    // Body
-    var body: Stmt = parseBlock(p)
-
-    return makeForStmt(var_name, loc)
-}
-
-// Parse a block: { statements... }
-fn parseBlock(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.LeftBrace, "Expected '{'")
-
-    var stmt_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        var stmt: Stmt = parseStatement(p)
-        stmt_count = stmt_count + 1
-
-        // Optional semicolon between statements
-        parserMatch(p, TokenType.Semicolon)
-    }
-
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after block")
-
-    return makeBlockStmt(stmt_count, loc)
-}
-
-// Parse a switch statement: switch (expr) { arms }
-fn parseSwitchStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwSwitch, "Expected 'switch'")
-
-    // Switch expression (parentheses required)
-    parserConsume(p, TokenType.LeftParen, "Expected '(' after 'switch'")
-    var switch_expr: Expr = parseExpr(p)
-    parserConsume(p, TokenType.RightParen, "Expected ')' after switch expression")
-
-    // Arms
-    parserConsume(p, TokenType.LeftBrace, "Expected '{' before switch arms")
-
-    var arm_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        // Parse pattern
-        var pattern: Expr = parseExpr(p)
-
-        // Arrow
-        parserConsume(p, TokenType.FatArrow, "Expected '=>' after pattern")
-
-        // Body (either block or expression)
-        if (parserCheck(p, TokenType.LeftBrace)) {
-            var body: Stmt = parseBlock(p)
-        } else {
-            var body_expr: Expr = parseExpr(p)
-        }
-
-        arm_count = arm_count + 1
-
-        // Optional comma between arms
-        parserMatch(p, TokenType.Comma)
-    }
-
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after switch arms")
-
-    return makeSwitchStmt(arm_count, loc)
-}
-
-// Parse a loop statement: loop { body }
-fn parseLoopStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwLoop, "Expected 'loop'")
-
-    // Body
-    var body: Stmt = parseBlock(p)
-
-    return makeLoopStmt(loc)
-}
-
-// Parse a defer statement: defer expr
-fn parseDeferStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwDefer, "Expected 'defer'")
-
-    // Deferred expression (usually a function call or block)
-    if (parserCheck(p, TokenType.LeftBrace)) {
-        var body: Stmt = parseBlock(p)
-    } else {
-        var expr: Expr = parseExpr(p)
-    }
-
-    return makeDeferStmt(loc)
-}
-
-// Parse a try statement: try { body } catch (err) { handler }
-fn parseTryStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwTry, "Expected 'try'")
-
-    // Try body
-    var try_body: Stmt = parseBlock(p)
-
-    // Catch clause
-    var catch_var: string = ""
-    if (parserMatch(p, TokenType.KwCatch)) {
-        // Optional error binding: catch (err)
-        if (parserCheck(p, TokenType.LeftParen)) {
-            parserAdvance(p)
-            if (parserCheck(p, TokenType.Identifier)) {
-                catch_var = p.current.lexeme
-                parserAdvance(p)
+        // Dispatch based on leading keyword
+        switch (self.current.token_type) {
+            // Visibility modifier
+            TokenType.KwPub => {
+                return self.parsePubDecl()
             }
-            parserConsume(p, TokenType.RightParen, "Expected ')' after catch variable")
-        }
 
-        // Catch body
-        var catch_body: Stmt = parseBlock(p)
-    }
+            // Declarations
+            TokenType.KwFn => {
+                return self.parseFunctionDecl()
+            }
+            TokenType.KwStruct => {
+                return self.parseStructDecl()
+            }
+            TokenType.KwEnum => {
+                return self.parseEnumDecl()
+            }
+            TokenType.KwImpl => {
+                return self.parseImplDecl()
+            }
+            TokenType.KwImport => {
+                return self.parseImportStmt()
+            }
 
-    return makeTryStmt(catch_var, loc)
-}
+            // Variable declarations
+            TokenType.KwVar => {
+                return self.parseVarDecl()
+            }
+            TokenType.KwConst => {
+                return self.parseConstDecl()
+            }
 
-// Parse a throw statement: throw expr
-fn parseThrowStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwThrow, "Expected 'throw'")
-
-    // Thrown expression
-    var expr: Expr = parseExpr(p)
-
-    return makeThrowStmt(loc)
-}
-
-// Parse a test declaration: test "name" { body }
-fn parseTestDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwTest, "Expected 'test'")
-
-    // Test name (string literal)
-    if (!parserCheck(p, TokenType.StringLiteral)) {
-        parserErrorAtCurrent(p, "Expected test name string")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Test body
-    var body: Stmt = parseBlock(p)
-
-    return makeTestDeclStmt(name, loc)
-}
-
-// Parse a union declaration: union Name { fields }
-fn parseUnionDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwUnion, "Expected 'union'")
-
-    // Union name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected union name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Fields
-    parserConsume(p, TokenType.LeftBrace, "Expected '{' after union name")
-
-    var field_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        // Field name
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected field name")
-            break
-        }
-        var field_name: string = p.current.lexeme
-        parserAdvance(p)
-
-        // Field type
-        parserConsume(p, TokenType.Colon, "Expected ':' after field name")
-        var field_type: TypeRef = parseType(p)
-
-        field_count = field_count + 1
-
-        // Optional comma between fields
-        parserMatch(p, TokenType.Comma)
-    }
-
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after union fields")
-
-    return makeUnionDeclStmt(name, field_count, loc)
-}
-
-// Parse a type alias: type Name = Type
-fn parseTypeAliasDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwType, "Expected 'type'")
-
-    // Alias name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected type alias name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Equals and aliased type
-    parserConsume(p, TokenType.Equals, "Expected '=' after type name")
-    var aliased_type: TypeRef = parseType(p)
-
-    return makeTypeAliasDeclStmt(name, loc)
-}
-
-// Parse a view declaration: view name: Type = @base_field or view name: Type = @base_field + offset
-fn parseViewDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwView, "Expected 'view'")
-
-    // View name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected view name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Type annotation is required
-    parserConsume(p, TokenType.Colon, "Expected ':'")
-    var view_type: TypeRef = parseType(p)
-
-    parserConsume(p, TokenType.Equals, "Expected '='")
-
-    // Expect @ followed by base field name
-    parserConsume(p, TokenType.At, "Expected '@' before base field name")
-
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected base field name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var base_field: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Parse optional offset: + or - followed by number
-    var offset: i64 = 0
-    if (parserMatch(p, TokenType.Plus)) {
-        if (parserCheck(p, TokenType.IntegerLiteral)) {
-            offset = parseInt(p.current.lexeme)
-            parserAdvance(p)
-        } else {
-            parserErrorAtCurrent(p, "Expected offset value")
-        }
-    } else if (parserMatch(p, TokenType.Minus)) {
-        if (parserCheck(p, TokenType.IntegerLiteral)) {
-            offset = 0 - parseInt(p.current.lexeme)
-            parserAdvance(p)
-        } else {
-            parserErrorAtCurrent(p, "Expected offset value")
-        }
-    }
-
-    return makeViewDeclStmt(name, base_field, offset, loc)
-}
-
-// Parse a trait declaration: trait Name { fn method(self: Self) RetType; ... }
-fn parseTraitDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwTrait, "Expected 'trait'")
-
-    // Trait name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected trait name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    parserConsume(p, TokenType.LeftBrace, "Expected '{'")
-
-    // Parse method signatures (simplified - just consume until closing brace)
-    var method_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        // Each method starts with 'fn'
-        if (!parserCheck(p, TokenType.KwFn)) {
-            parserErrorAtCurrent(p, "Expected 'fn' for trait method")
-            break
-        }
-        // For now, just parse as a function declaration without body
-        // The Cot type checker will handle trait method signatures
-        parserAdvance(p)  // consume 'fn'
-
-        // Method name
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected method name")
-            break
-        }
-        parserAdvance(p)  // consume method name
-
-        // Parameters
-        parserConsume(p, TokenType.LeftParen, "Expected '('")
-        while (!parserCheck(p, TokenType.RightParen) and !parserIsAtEnd(p)) {
-            parserAdvance(p)  // skip parameter tokens
-            if (parserCheck(p, TokenType.Comma)) {
-                parserAdvance(p)
+            // Control flow
+            TokenType.KwReturn => {
+                return self.parseReturnStmt()
+            }
+            TokenType.KwIf => {
+                return self.parseIfStmt()
+            }
+            TokenType.KwWhile => {
+                return self.parseWhileStmt()
+            }
+            TokenType.KwFor => {
+                return self.parseForStmt()
+            }
+            TokenType.KwSwitch => {
+                return self.parseSwitchStmt()
+            }
+            TokenType.KwLoop => {
+                return self.parseLoopStmt()
+            }
+            TokenType.KwDefer => {
+                return self.parseDeferStmt()
+            }
+            TokenType.KwTry => {
+                return self.parseTryStmt()
+            }
+            TokenType.KwThrow => {
+                return self.parseThrowStmt()
+            }
+            TokenType.KwTest => {
+                return self.parseTestDecl()
+            }
+            TokenType.KwUnion => {
+                return self.parseUnionDecl()
+            }
+            TokenType.KwType => {
+                return self.parseTypeAliasDecl()
+            }
+            TokenType.KwView => {
+                return self.parseViewDecl()
+            }
+            TokenType.KwTrait => {
+                return self.parseTraitDecl()
+            }
+            TokenType.KwComptime => {
+                return self.parseComptimeStmt()
+            }
+            TokenType.KwBreak => {
+                self.advance()
+                return makeBreakStmt(loc)
+            }
+            TokenType.KwContinue => {
+                self.advance()
+                return makeContinueStmt(loc)
+            }
+            TokenType.LeftBrace => {
+                return self.parseBlock()
             }
         }
-        parserConsume(p, TokenType.RightParen, "Expected ')'")
 
-        // Optional return type
-        if (!parserCheck(p, TokenType.Semicolon) and !parserCheck(p, TokenType.RightBrace)) {
-            var dummy_type: TypeRef = parseType(p)
+        // Default: expression statement
+        return self.parseExpressionStmt()
+    }
+
+    // Parse a pub declaration: pub fn/struct/enum/const/var
+    fn parsePubDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwPub, "Expected 'pub'")
+
+        // Parse the actual declaration and mark it as public
+        var stmt: *Stmt = self.parseStatement()
+        stmt.fn_public = true  // Mark as public (reuse fn_public for all decls)
+        return stmt
+    }
+
+    // Parse a variable declaration: var name: Type = expr
+    fn parseVarDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwVar, "Expected 'var'")
+
+        // Get variable name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected variable name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        // Optional type annotation
+        var var_type: ?*TypeRef = null
+        if (self.match(TokenType.Colon)) {
+            var_type = self.parseType()
         }
 
-        // Optional semicolon
-        parserMatch(p, TokenType.Semicolon)
-        method_count = method_count + 1
+        // Optional initializer
+        var var_init: ?*Expr = null
+        if (self.match(TokenType.Equals)) {
+            var_init = self.parseExpr()
+        }
+
+        return makeVarDeclStmt(name, true, var_type, var_init, loc)
     }
 
-    parserConsume(p, TokenType.RightBrace, "Expected '}'")
+    // Parse a constant declaration: const name: Type = expr
+    fn parseConstDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwConst, "Expected 'const'")
 
-    return makeTraitDeclStmt(name, method_count, loc)
-}
+        // Get constant name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected constant name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
 
-// Parse a comptime statement: comptime { } or comptime if { }
-fn parseComptimeStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwComptime, "Expected 'comptime'")
+        // Optional type annotation
+        var const_type: ?*TypeRef = null
+        if (self.match(TokenType.Colon)) {
+            const_type = self.parseType()
+        }
 
-    // Check for comptime if
-    if (parserCheck(p, TokenType.KwIf)) {
-        return parseComptimeIf(p, loc)
+        // Required initializer for const
+        self.consume(TokenType.Equals, "Expected '=' after constant name")
+        var init_expr: *Expr = self.parseExpr()
+
+        return makeVarDeclStmt(name, false, const_type, init_expr, loc)
     }
 
-    // Comptime block
-    parserConsume(p, TokenType.LeftBrace, "Expected '{'")
-    var body: Stmt = parseBlock(p)
+    // Parse a return statement: return expr
+    fn parseReturnStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwReturn, "Expected 'return'")
 
-    var s: Stmt = makeDefaultStmt(StmtKind.ComptimeStmt, loc)
-    // Note: comptime_body would need to be a pointer; for now just record the block
-    return s
-}
+        // Optional return value
+        if (self.check(TokenType.RightBrace) or self.check(TokenType.Semicolon) or self.isAtEnd()) {
+            return makeReturnStmt(null, loc)
+        }
 
-// Parse comptime if: comptime if (cond) { } else { }
-fn parseComptimeIf(p: *Parser, loc: SourceLoc) Stmt {
-    parserConsume(p, TokenType.KwIf, "Expected 'if'")
-    parserConsume(p, TokenType.LeftParen, "Expected '('")
-    var cond: Expr = parseExpr(p)
-    parserConsume(p, TokenType.RightParen, "Expected ')'")
+        var value: *Expr = self.parseExpr()
+        return makeReturnStmt(value, loc)
+    }
 
-    parserConsume(p, TokenType.LeftBrace, "Expected '{'")
-    var then_body: Stmt = parseBlock(p)
+    // Parse an if statement: if (cond) { then } else { else }
+    fn parseIfStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwIf, "Expected 'if'")
 
-    // Optional else
-    if (parserMatch(p, TokenType.KwElse)) {
-        if (parserCheck(p, TokenType.KwIf)) {
-            var else_body: Stmt = parseComptimeIf(p, sourceLocFromToken(p.current))
+        // Condition (parentheses required)
+        self.consume(TokenType.LeftParen, "Expected '(' after 'if'")
+        var cond: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after if condition")
+
+        // Then branch
+        var then_branch: *Stmt = self.parseBlock()
+
+        // Optional else branch
+        var else_branch: ?*Stmt = null
+        if (self.match(TokenType.KwElse)) {
+            // Check for else if
+            if (self.check(TokenType.KwIf)) {
+                else_branch = self.parseIfStmt()
+            } else {
+                else_branch = self.parseBlock()
+            }
+        }
+
+        return makeIfStmt(cond, then_branch, else_branch, loc)
+    }
+
+    // Parse a while loop: while (cond) { body }
+    fn parseWhileStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwWhile, "Expected 'while'")
+
+        // Condition (parentheses required)
+        self.consume(TokenType.LeftParen, "Expected '(' after 'while'")
+        var cond: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after while condition")
+
+        // Body
+        var body: *Stmt = self.parseBlock()
+
+        return makeWhileStmt(cond, body, loc)
+    }
+
+    // Parse a for loop: for (item in iter) { body }
+    fn parseForStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwFor, "Expected 'for'")
+
+        // Loop variable (parentheses optional but we'll require them for now)
+        self.consume(TokenType.LeftParen, "Expected '(' after 'for'")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected loop variable name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var var_name: string = self.current.lexeme
+        self.advance()
+
+        // 'in' keyword
+        self.consume(TokenType.KwIn, "Expected 'in' after loop variable")
+
+        // Iterator expression
+        var iter: *Expr = self.parseExpr()
+
+        self.consume(TokenType.RightParen, "Expected ')' after for clause")
+
+        // Body
+        var body: *Stmt = self.parseBlock()
+
+        return makeForStmt(var_name, iter, body, loc)
+    }
+
+    // Parse a block: { statements... }
+    fn parseBlock(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.LeftBrace, "Expected '{'")
+
+        var stmts = new List<*Stmt>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            var stmt: *Stmt = self.parseStatement()
+            stmts.push(stmt)
+
+            // Optional semicolon between statements
+            self.match(TokenType.Semicolon)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after block")
+
+        return makeBlockStmt(stmts.to_slice(), loc)
+    }
+
+    // Parse a switch statement: switch (expr) { arms }
+    fn parseSwitchStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwSwitch, "Expected 'switch'")
+
+        // Switch expression (parentheses required)
+        self.consume(TokenType.LeftParen, "Expected '(' after 'switch'")
+        var switch_expr: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')' after switch expression")
+
+        // Arms
+        self.consume(TokenType.LeftBrace, "Expected '{' before switch arms")
+
+        var arms = new List<SwitchArm>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            var arm_loc: SourceLoc = SourceLoc.fromToken(self.current)
+
+            // Parse pattern
+            var pattern: *Expr = self.parseExpr()
+
+            // Arrow
+            self.consume(TokenType.FatArrow, "Expected '=>' after pattern")
+
+            // Body (either block or expression)
+            var body: *Expr = makeNullExpr(arm_loc)
+            if (self.check(TokenType.LeftBrace)) {
+                var block_stmt: *Stmt = self.parseBlock()
+                body = makeBlockExpr(block_stmt, arm_loc)
+            } else {
+                body = self.parseExpr()
+            }
+
+            // Extract binding names if pattern is a call-like form (e.g., Option.Some(val))
+            var binding_names = new List<string>
+            if (pattern.kind == ExprKind.CallExpr) {
+                // The args of the call are the binding variables
+                var i: i64 = 0
+                while (i < pattern.args.len()) {
+                    var arg: *Expr = pattern.args[i]
+                    if (arg.kind == ExprKind.IdentifierExpr) {
+                        binding_names.push(arg.name)
+                    }
+                    i = i + 1
+                }
+            }
+
+            arms.push(SwitchArm{
+                .pattern = pattern,
+                .body = body,
+                .is_default = false,
+                .loc = arm_loc,
+                .binding_names = binding_names.to_slice(),
+            })
+
+            // Optional comma between arms
+            self.match(TokenType.Comma)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after switch arms")
+
+        return makeSwitchStmt(switch_expr, arms.to_slice(), loc)
+    }
+
+    // Parse a loop statement: loop { body }
+    fn parseLoopStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwLoop, "Expected 'loop'")
+
+        // Body
+        var body: *Stmt = self.parseBlock()
+
+        return makeLoopStmt(body, loc)
+    }
+
+    // Parse a defer statement: defer expr
+    fn parseDeferStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwDefer, "Expected 'defer'")
+
+        // Deferred expression (usually a function call or block)
+        var expr: *Expr = makeNullExpr(loc)
+        if (self.check(TokenType.LeftBrace)) {
+            var block_stmt: *Stmt = self.parseBlock()
+            expr = makeBlockExpr(block_stmt, loc)
         } else {
-            parserConsume(p, TokenType.LeftBrace, "Expected '{'")
-            var else_body: Stmt = parseBlock(p)
+            expr = self.parseExpr()
         }
+
+        return makeDeferStmt(expr, loc)
     }
 
-    var s: Stmt = makeDefaultStmt(StmtKind.ComptimeStmt, loc)
+    // Parse a try statement: try { body } catch (err) { handler }
+    fn parseTryStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwTry, "Expected 'try'")
+
+        // Try body
+        var try_body: *Stmt = self.parseBlock()
+
+        // Catch clause
+        var catch_var: string = ""
+        var catch_body: *Stmt = makeBlockStmt([], loc)  // Empty block as default
+        if (self.match(TokenType.KwCatch)) {
+            // Optional error binding: catch (err)
+            if (self.check(TokenType.LeftParen)) {
+                self.advance()
+                if (self.check(TokenType.Identifier)) {
+                    catch_var = self.current.lexeme
+                    self.advance()
+                }
+                self.consume(TokenType.RightParen, "Expected ')' after catch variable")
+            }
+
+            // Catch body
+            catch_body = self.parseBlock()
+        }
+
+        return makeTryStmt(try_body, catch_var, catch_body, loc)
+    }
+
+    // Parse a throw statement: throw expr
+    fn parseThrowStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwThrow, "Expected 'throw'")
+
+        // Thrown expression
+        var expr: *Expr = self.parseExpr()
+
+        return makeThrowStmt(expr, loc)
+    }
+
+    // Parse a test declaration: test "name" { body }
+    fn parseTestDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwTest, "Expected 'test'")
+
+        // Test name (string literal)
+        if (!self.check(TokenType.StringLiteral)) {
+            self.errorAtCurrent("Expected test name string")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        // Test body
+        var body: *Stmt = self.parseBlock()
+
+        return makeTestDeclStmt(name, body, loc)
+    }
+
+    // Parse a union declaration: union Name { fields }
+    fn parseUnionDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwUnion, "Expected 'union'")
+
+        // Union name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected union name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        // Fields
+        self.consume(TokenType.LeftBrace, "Expected '{' after union name")
+
+        var fields = new List<Field>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            // Field name
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected field name")
+                break
+            }
+            var field_name: string = self.current.lexeme
+            var field_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            // Field type
+            self.consume(TokenType.Colon, "Expected ':' after field name")
+            var field_type: *TypeRef = self.parseType()
+
+            fields.push(Field{
+                .name = field_name,
+                .field_type = field_type,
+                .loc = field_loc,
+            })
+
+            // Optional comma between fields
+            self.match(TokenType.Comma)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after union fields")
+
+        return makeUnionDeclStmt(name, fields.to_slice(), loc)
+    }
+
+    // Parse a type alias: type Name = Type
+    fn parseTypeAliasDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwType, "Expected 'type'")
+
+        // Alias name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected type alias name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        // Equals and aliased type
+        self.consume(TokenType.Equals, "Expected '=' after type name")
+        var aliased_type: *TypeRef = self.parseType()
+
+        return makeTypeAliasDeclStmt(name, aliased_type, loc)
+    }
+
+    // Parse a view declaration: view name: Type = @base_field or view name: Type = @base_field + offset
+    fn parseViewDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwView, "Expected 'view'")
+
+        // View name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected view name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        // Type annotation is required
+        self.consume(TokenType.Colon, "Expected ':'")
+        var view_type: *TypeRef = self.parseType()
+
+        self.consume(TokenType.Equals, "Expected '='")
+
+        // Expect @ followed by base field name
+        self.consume(TokenType.At, "Expected '@' before base field name")
+
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected base field name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var base_field: string = self.current.lexeme
+        self.advance()
+
+        // Parse optional offset: + or - followed by number
+        var offset: i64 = 0
+        if (self.match(TokenType.Plus)) {
+            if (self.check(TokenType.IntegerLiteral)) {
+                offset = parseInt(self.current.lexeme)
+                self.advance()
+            } else {
+                self.errorAtCurrent("Expected offset value")
+            }
+        } else if (self.match(TokenType.Minus)) {
+            if (self.check(TokenType.IntegerLiteral)) {
+                offset = 0 - parseInt(self.current.lexeme)
+                self.advance()
+            } else {
+                self.errorAtCurrent("Expected offset value")
+            }
+        }
+
+        return makeViewDeclStmt(name, view_type, base_field, offset, loc)
+    }
+
+    // Parse a trait declaration: trait Name { fn method(self: Self) RetType; ... }
+    fn parseTraitDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwTrait, "Expected 'trait'")
+
+        // Trait name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected trait name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
+
+        self.consume(TokenType.LeftBrace, "Expected '{'")
+
+        // Parse method signatures (simplified - collect methods as function declarations without bodies)
+        var methods = new List<*Stmt>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            // Each method starts with 'fn'
+            if (!self.check(TokenType.KwFn)) {
+                self.errorAtCurrent("Expected 'fn' for trait method")
+                break
+            }
+            var method_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()  // consume 'fn'
+
+            // Method name
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected method name")
+                break
+            }
+            var method_name: string = self.current.lexeme
+            self.advance()  // consume method name
+
+            // Parameters
+            self.consume(TokenType.LeftParen, "Expected '('")
+            var params = new List<Param>
+            while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+                if (params.len() > 0) {
+                    self.consume(TokenType.Comma, "Expected ','")
+                }
+                if (self.check(TokenType.Identifier)) {
+                    var param_name: string = self.current.lexeme
+                    var param_loc: SourceLoc = SourceLoc.fromToken(self.current)
+                    self.advance()
+                    var param_type: ?*TypeRef = null
+                    if (self.match(TokenType.Colon)) {
+                        param_type = self.parseType()
+                    }
+                    params.push(Param{
+                        .name = param_name,
+                        .param_type = param_type,
+                        .loc = param_loc,
+                    })
+                } else {
+                    break
+                }
+            }
+            self.consume(TokenType.RightParen, "Expected ')'")
+
+            // Optional return type
+            var return_type: ?*TypeRef = null
+            if (!self.check(TokenType.Semicolon) and !self.check(TokenType.RightBrace)) {
+                return_type = self.parseType()
+            }
+
+            // Create method declaration (no body for trait methods)
+            methods.push(makeFunctionDeclStmt(method_name, params.to_slice(), return_type, null, method_loc))
+
+            // Optional semicolon
+            self.match(TokenType.Semicolon)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}'")
+
+        return makeTraitDeclStmt(name, methods.to_slice(), loc)
+    }
+
+    // Parse a comptime statement: comptime { } or comptime if { }
+    fn parseComptimeStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwComptime, "Expected 'comptime'")
+
+        // Check for comptime if
+        if (self.check(TokenType.KwIf)) {
+            return self.parseComptimeIf(loc)
+        }
+
+        // Comptime block
+        self.consume(TokenType.LeftBrace, "Expected '{'")
+        var body: *Stmt = self.parseBlock()
+
+        return makeComptimeStmt(body, null, null, loc)
+    }
+
+    // Parse comptime if: comptime if (cond) { } else { }
+    fn parseComptimeIf(self: *Parser, loc: SourceLoc) *Stmt {
+        self.consume(TokenType.KwIf, "Expected 'if'")
+        self.consume(TokenType.LeftParen, "Expected '('")
+        var cond: *Expr = self.parseExpr()
+        self.consume(TokenType.RightParen, "Expected ')'")
+
+        self.consume(TokenType.LeftBrace, "Expected '{'")
+        var then_body: *Stmt = self.parseBlock()
+
+        // Optional else
+        var else_body: ?*Stmt = null
+        if (self.match(TokenType.KwElse)) {
+            if (self.check(TokenType.KwIf)) {
+                else_body = self.parseComptimeIf(SourceLoc.fromToken(self.current))
+            } else {
+                self.consume(TokenType.LeftBrace, "Expected '{'")
+                else_body = self.parseBlock()
+            }
+        }
+
+        return makeComptimeStmt(then_body, cond, else_body, loc)
+    }
+}
+
+// Helper to create comptime statement
+fn makeComptimeStmt(body: ?*Stmt, cond: ?*Expr, else_branch: ?*Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.ComptimeStmt, loc)
+    s.comptime_body = body
+    s.comptime_cond = cond
+    s.comptime_else = else_branch
     return s
 }
 
 // Helper to create trait declaration statement
-fn makeTraitDeclStmt(name: string, method_count: i64, loc: SourceLoc) Stmt {
-    var s: Stmt = makeDefaultStmt(StmtKind.TraitDecl, loc)
+fn makeTraitDeclStmt(name: string, methods: []*Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.TraitDecl, loc)
     s.trait_name = name
+    s.trait_methods = methods
     return s
 }
 
@@ -1623,432 +1791,381 @@ fn makeTraitDeclStmt(name: string, method_count: i64, loc: SourceLoc) Stmt {
 // Type Parsing
 // =============================================================================
 
-// Parse a type reference: T, *T, ?T, [N]T, []T
-fn parseType(p: *Parser) TypeRef {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
+impl Parser {
+    // Parse a type reference: T, *T, ?T, [N]T, []T
+    fn parseType(self: *Parser) *TypeRef {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
 
-    // Pointer type: *T
-    if (parserCheck(p, TokenType.Star)) {
-        parserAdvance(p)
-        var inner: TypeRef = parseType(p)
-        return makePointerType(inner, loc)
-    }
+        // Pointer type: *T
+        if (self.check(TokenType.Star)) {
+            self.advance()
+            var inner: *TypeRef = self.parseType()
+            return makePointerTypeRef(inner, loc)
+        }
 
-    // Optional type: ?T
-    if (parserCheck(p, TokenType.Question)) {
-        parserAdvance(p)
-        var inner: TypeRef = parseType(p)
-        return makeOptionalType(inner, loc)
-    }
+        // Optional type: ?T
+        if (self.check(TokenType.Question)) {
+            self.advance()
+            var inner: *TypeRef = self.parseType()
+            return makeOptionalTypeRef(inner, loc)
+        }
 
-    // Array or slice type: [N]T or []T
-    if (parserCheck(p, TokenType.LeftBracket)) {
-        parserAdvance(p)
+        // Array or slice type: [N]T or []T
+        if (self.check(TokenType.LeftBracket)) {
+            self.advance()
 
-        // Check if it's a slice (empty brackets) or array (size specified)
-        if (parserCheck(p, TokenType.RightBracket)) {
-            // Slice type: []T
-            parserAdvance(p)
-            var elem: TypeRef = parseType(p)
-            return makeSliceType(elem, loc)
-        } else {
-            // Array type: [N]T
-            var size: i64 = 0
-            if (parserCheck(p, TokenType.IntegerLiteral)) {
-                size = parseInt(p.current.lexeme)
-                parserAdvance(p)
+            // Check if it's a slice (empty brackets) or array (size specified)
+            if (self.check(TokenType.RightBracket)) {
+                // Slice type: []T
+                self.advance()
+                var elem: *TypeRef = self.parseType()
+                return makeSliceTypeRef(elem, loc)
             } else {
-                parserErrorAtCurrent(p, "Expected array size")
-            }
-            parserConsume(p, TokenType.RightBracket, "Expected ']' after array size")
-            var elem: TypeRef = parseType(p)
-            return makeArrayType(elem, size, loc)
-        }
-    }
-
-    // Named type: identifier
-    if (parserCheck(p, TokenType.Identifier)) {
-        var name: string = p.current.lexeme
-        parserAdvance(p)
-
-        // Check for generic type arguments: Type[T, U]
-        if (parserCheck(p, TokenType.LeftBracket)) {
-            parserAdvance(p)
-            var type_arg_count: i64 = 0
-            while (!parserCheck(p, TokenType.RightBracket) and !parserIsAtEnd(p)) {
-                if (type_arg_count > 0) {
-                    parserConsume(p, TokenType.Comma, "Expected ',' between type arguments")
+                // Array type: [N]T
+                var size: i64 = 0
+                if (self.check(TokenType.IntegerLiteral)) {
+                    size = parseInt(self.current.lexeme)
+                    self.advance()
+                } else {
+                    self.errorAtCurrent("Expected array size")
                 }
-                var type_arg: TypeRef = parseType(p)
-                type_arg_count = type_arg_count + 1
+                self.consume(TokenType.RightBracket, "Expected ']' after array size")
+                var elem: *TypeRef = self.parseType()
+                return makeArrayTypeRef(elem, size, loc)
             }
-            parserConsume(p, TokenType.RightBracket, "Expected ']' after type arguments")
-            return makeGenericType(name, type_arg_count, loc)
         }
 
-        return makeNamedType(name, loc)
-    }
+        // Named type: identifier
+        if (self.check(TokenType.Identifier)) {
+            var name: string = self.current.lexeme
+            self.advance()
 
-    // Function type: fn(A, B) RetType
-    if (parserCheck(p, TokenType.KwFn)) {
-        parserAdvance(p)
-        parserConsume(p, TokenType.LeftParen, "Expected '(' after 'fn' in type")
-
-        var param_count: i64 = 0
-        while (!parserCheck(p, TokenType.RightParen) and !parserIsAtEnd(p)) {
-            if (param_count > 0) {
-                parserConsume(p, TokenType.Comma, "Expected ',' between parameter types")
+            // Check for generic type arguments: Type[T, U]
+            if (self.check(TokenType.LeftBracket)) {
+                self.advance()
+                var type_args = new List<*TypeRef>
+                while (!self.check(TokenType.RightBracket) and !self.isAtEnd()) {
+                    if (type_args.len() > 0) {
+                        self.consume(TokenType.Comma, "Expected ',' between type arguments")
+                    }
+                    var type_arg: *TypeRef = self.parseType()
+                    type_args.push(type_arg)
+                }
+                self.consume(TokenType.RightBracket, "Expected ']' after type arguments")
+                return makeGenericTypeRef(name, type_args.to_slice(), loc)
             }
-            var param_type: TypeRef = parseType(p)
-            param_count = param_count + 1
-        }
-        parserConsume(p, TokenType.RightParen, "Expected ')' after parameter types")
 
-        // Return type (optional, defaults to void)
-        var has_return: bool = false
-        if (!parserCheck(p, TokenType.LeftBrace) and !parserCheck(p, TokenType.Semicolon) and !parserIsAtEnd(p)) {
-            var return_type: TypeRef = parseType(p)
-            has_return = true
+            return makeNamedTypeRef(name, loc)
         }
 
-        return makeFunctionType(param_count, has_return, loc)
-    }
+        // Function type: fn(A, B) RetType
+        if (self.check(TokenType.KwFn)) {
+            self.advance()
+            self.consume(TokenType.LeftParen, "Expected '(' after 'fn' in type")
 
-    parserErrorAtCurrent(p, "Expected type")
-    return makeNamedType("void", loc)
-}
+            var param_types = new List<*TypeRef>
+            while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+                if (param_types.len() > 0) {
+                    self.consume(TokenType.Comma, "Expected ',' between parameter types")
+                }
+                var param_type: *TypeRef = self.parseType()
+                param_types.push(param_type)
+            }
+            self.consume(TokenType.RightParen, "Expected ')' after parameter types")
 
-// =============================================================================
-// Type Constructors
-// =============================================================================
+            // Return type (optional, defaults to void)
+            var return_type: ?*TypeRef = null
+            if (!self.check(TokenType.LeftBrace) and !self.check(TokenType.Semicolon) and !self.isAtEnd()) {
+                return_type = self.parseType()
+            }
 
-fn makeNamedType(name: string, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Named,
-        .loc = loc,
-        .name = name,
-        .inner = null,
-        .array_size = 0,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,
-    }
-}
-
-fn makePointerType(inner: TypeRef, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Pointer,
-        .loc = loc,
-        .name = "",
-        .inner = null,  // TODO: Store inner type
-        .array_size = 0,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,
-    }
-}
-
-fn makeOptionalType(inner: TypeRef, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Optional,
-        .loc = loc,
-        .name = "",
-        .inner = null,  // TODO: Store inner type
-        .array_size = 0,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,
-    }
-}
-
-fn makeArrayType(elem: TypeRef, size: i64, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Array,
-        .loc = loc,
-        .name = "",
-        .inner = null,  // TODO: Store element type
-        .array_size = size,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,
-    }
-}
-
-fn makeSliceType(elem: TypeRef, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Slice,
-        .loc = loc,
-        .name = "",
-        .inner = null,  // TODO: Store element type
-        .array_size = 0,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,
-    }
-}
-
-fn makeGenericType(name: string, type_arg_count: i64, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Generic,
-        .loc = loc,
-        .name = name,
-        .inner = null,
-        .array_size = 0,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,  // TODO: Store type arguments
-    }
-}
-
-fn makeFunctionType(param_count: i64, has_return: bool, loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Function,
-        .loc = loc,
-        .name = "",
-        .inner = null,
-        .array_size = param_count,  // Store param count temporarily in array_size
-        .param_types = empty_type_refs,  // TODO: Store param types
-        .return_type = null,  // TODO: Store return type
-        .type_args = empty_type_refs,
-    }
-}
-
-fn makeInferredType(loc: SourceLoc) TypeRef {
-    var empty_type_refs: []*TypeRef = []
-
-    return TypeRef{
-        .kind = TypeKind.Inferred,
-        .loc = loc,
-        .name = "",
-        .inner = null,
-        .array_size = 0,
-        .param_types = empty_type_refs,
-        .return_type = null,
-        .type_args = empty_type_refs,
-    }
-}
-
-// =============================================================================
-// Declaration Parsing
-// =============================================================================
-
-// Parse a function declaration: fn name(params) ReturnType { body }
-fn parseFunctionDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwFn, "Expected 'fn'")
-
-    // Function name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected function name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Parameters
-    parserConsume(p, TokenType.LeftParen, "Expected '(' after function name")
-
-    var param_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightParen) and !parserIsAtEnd(p)) {
-        if (param_count > 0) {
-            parserConsume(p, TokenType.Comma, "Expected ',' between parameters")
+            return makeFunctionTypeRef(param_types.to_slice(), return_type, loc)
         }
 
-        // Parameter name
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected parameter name")
-            break
+        self.errorAtCurrent("Expected type")
+        return makeNamedTypeRef("void", loc)
+    }
+
+    // =========================================================================
+    // Declaration Parsing
+    // =========================================================================
+
+    // Parse a function declaration: fn name(params) ReturnType { body }
+    fn parseFunctionDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwFn, "Expected 'fn'")
+
+        // Function name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected function name")
+            return makeExprStmt(makeNullExpr(loc), loc)
         }
-        var param_name: string = p.current.lexeme
-        parserAdvance(p)
+        var name: string = self.current.lexeme
+        self.advance()
 
-        // Parameter type
-        parserConsume(p, TokenType.Colon, "Expected ':' after parameter name")
-        var param_type: TypeRef = parseType(p)
+        // Parameters
+        self.consume(TokenType.LeftParen, "Expected '(' after function name")
 
-        param_count = param_count + 1
-    }
+        var params = new List<Param>
+        while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+            if (params.len() > 0) {
+                self.consume(TokenType.Comma, "Expected ',' between parameters")
+            }
 
-    parserConsume(p, TokenType.RightParen, "Expected ')' after parameters")
+            // Parameter name
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected parameter name")
+                break
+            }
+            var param_name: string = self.current.lexeme
+            var param_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
 
-    // Optional return type (anything except { starts the body)
-    if (!parserCheck(p, TokenType.LeftBrace)) {
-        var return_type: TypeRef = parseType(p)
-    }
+            // Parameter type
+            self.consume(TokenType.Colon, "Expected ':' after parameter name")
+            var param_type: *TypeRef = self.parseType()
 
-    // Function body
-    var body: Stmt = parseBlock(p)
-
-    return makeFunctionDeclStmt(name, param_count, loc)
-}
-
-// Parse a struct declaration: struct Name { fields }
-fn parseStructDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwStruct, "Expected 'struct'")
-
-    // Struct name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected struct name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Fields
-    parserConsume(p, TokenType.LeftBrace, "Expected '{' after struct name")
-
-    var field_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        // Field name
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected field name")
-            break
-        }
-        var field_name: string = p.current.lexeme
-        parserAdvance(p)
-
-        // Field type
-        parserConsume(p, TokenType.Colon, "Expected ':' after field name")
-        var field_type: TypeRef = parseType(p)
-
-        field_count = field_count + 1
-
-        // Optional comma between fields
-        parserMatch(p, TokenType.Comma)
-    }
-
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after struct fields")
-
-    return makeStructDeclStmt(name, field_count, loc)
-}
-
-// Parse an enum declaration: enum Name { variants }
-fn parseEnumDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwEnum, "Expected 'enum'")
-
-    // Enum name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected enum name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Variants
-    parserConsume(p, TokenType.LeftBrace, "Expected '{' after enum name")
-
-    var variant_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        // Variant name
-        if (!parserCheck(p, TokenType.Identifier)) {
-            parserErrorAtCurrent(p, "Expected variant name")
-            break
-        }
-        var variant_name: string = p.current.lexeme
-        parserAdvance(p)
-
-        // Optional explicit value
-        if (parserMatch(p, TokenType.Equals)) {
-            var value: Expr = parseExpr(p)
+            params.push(Param{
+                .name = param_name,
+                .param_type = param_type,
+                .loc = param_loc,
+            })
         }
 
-        variant_count = variant_count + 1
+        self.consume(TokenType.RightParen, "Expected ')' after parameters")
 
-        // Optional comma between variants
-        parserMatch(p, TokenType.Comma)
-    }
-
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after enum variants")
-
-    return makeEnumDeclStmt(name, variant_count, loc)
-}
-
-// Parse an impl block: impl Type { methods }
-fn parseImplDecl(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwImpl, "Expected 'impl'")
-
-    // Type name
-    if (!parserCheck(p, TokenType.Identifier)) {
-        parserErrorAtCurrent(p, "Expected type name")
-        return makeExprStmt(makeNullExpr(loc), loc)
-    }
-    var type_name: string = p.current.lexeme
-    parserAdvance(p)
-
-    // Methods
-    parserConsume(p, TokenType.LeftBrace, "Expected '{' after impl type")
-
-    var method_count: i64 = 0
-    while (!parserCheck(p, TokenType.RightBrace) and !parserIsAtEnd(p)) {
-        // Each method is a function declaration
-        if (parserCheck(p, TokenType.KwFn)) {
-            var method: Stmt = parseFunctionDecl(p)
-            method_count = method_count + 1
-        } else {
-            parserErrorAtCurrent(p, "Expected 'fn' in impl block")
-            parserAdvance(p)
+        // Optional return type (anything except { starts the body)
+        var return_type: ?*TypeRef = null
+        if (!self.check(TokenType.LeftBrace)) {
+            return_type = self.parseType()
         }
+
+        // Function body
+        var body: *Stmt = self.parseBlock()
+
+        return makeFunctionDeclStmt(name, params.to_slice(), return_type, body, loc)
     }
 
-    parserConsume(p, TokenType.RightBrace, "Expected '}' after impl methods")
+    // Parse a struct declaration: struct Name { fields }
+    fn parseStructDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwStruct, "Expected 'struct'")
 
-    return makeImplDeclStmt(type_name, method_count, loc)
-}
+        // Struct name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected struct name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
 
-// Parse an import statement: import "module"
-fn parseImportStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    parserConsume(p, TokenType.KwImport, "Expected 'import'")
+        // Fields
+        self.consume(TokenType.LeftBrace, "Expected '{' after struct name")
 
-    // Module path (string literal)
-    if (!parserCheck(p, TokenType.StringLiteral)) {
-        parserErrorAtCurrent(p, "Expected module path string")
-        return makeExprStmt(makeNullExpr(loc), loc)
+        var fields = new List<Field>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            // Field name
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected field name")
+                break
+            }
+            var field_name: string = self.current.lexeme
+            var field_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            // Field type
+            self.consume(TokenType.Colon, "Expected ':' after field name")
+            var field_type: *TypeRef = self.parseType()
+
+            fields.push(Field{
+                .name = field_name,
+                .field_type = field_type,
+                .loc = field_loc,
+            })
+
+            // Optional comma between fields
+            self.match(TokenType.Comma)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after struct fields")
+
+        return makeStructDeclStmt(name, fields.to_slice(), loc)
     }
-    var path: string = p.current.lexeme
-    parserAdvance(p)
 
-    return makeImportStmt(path, loc)
-}
+    // Parse an enum declaration: enum Name { variants }
+    fn parseEnumDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwEnum, "Expected 'enum'")
 
-// Parse an expression statement
-fn parseExpressionStmt(p: *Parser) Stmt {
-    var loc: SourceLoc = sourceLocFromToken(p.current)
-    var expr: Expr = parseExpr(p)
+        // Enum name
+        if (!self.check(TokenType.Identifier)) {
+            self.errorAtCurrent("Expected enum name")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var name: string = self.current.lexeme
+        self.advance()
 
-    // Optional semicolon
-    parserMatch(p, TokenType.Semicolon)
+        // Variants
+        self.consume(TokenType.LeftBrace, "Expected '{' after enum name")
 
-    return makeExprStmt(expr, loc)
+        var variants = new List<EnumVariant>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            // Variant name
+            if (!self.check(TokenType.Identifier)) {
+                self.errorAtCurrent("Expected variant name")
+                break
+            }
+            var variant_name: string = self.current.lexeme
+            var variant_loc: SourceLoc = SourceLoc.fromToken(self.current)
+            self.advance()
+
+            // Check for payload types
+            var payload_types = new List<*TypeRef>
+            var payload_fields = new List<Field>
+            var has_payload: bool = false
+
+            if (self.match(TokenType.LeftParen)) {
+                // Tuple payload: Variant(Type1, Type2, ...)
+                has_payload = true
+                while (!self.check(TokenType.RightParen) and !self.isAtEnd()) {
+                    var ptype: *TypeRef = self.parseType()
+                    payload_types.push(ptype)
+                    if (!self.match(TokenType.Comma)) {
+                        break
+                    }
+                }
+                self.consume(TokenType.RightParen, "Expected ')' after payload types")
+            } else if (self.check(TokenType.LeftBrace)) {
+                // Could be struct payload: Variant { field: Type, ... }
+                // But only if not followed by variant body (we need lookahead)
+                // For now, parse struct-style payload
+                self.advance()  // consume '{'
+                has_payload = true
+                while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+                    // Field name
+                    if (!self.check(TokenType.Identifier)) {
+                        self.errorAtCurrent("Expected field name")
+                        break
+                    }
+                    var field_name: string = self.current.lexeme
+                    var field_loc: SourceLoc = SourceLoc.fromToken(self.current)
+                    self.advance()
+
+                    // Colon and type
+                    self.consume(TokenType.Colon, "Expected ':' after field name")
+                    var field_type: *TypeRef = self.parseType()
+
+                    payload_fields.push(Field{
+                        .name = field_name,
+                        .field_type = field_type,
+                        .loc = field_loc,
+                    })
+
+                    if (!self.match(TokenType.Comma)) {
+                        break
+                    }
+                }
+                self.consume(TokenType.RightBrace, "Expected '}' after payload fields")
+            }
+
+            // Optional explicit value (only for simple enums without payload)
+            var variant_value: ?*Expr = null
+            if (self.match(TokenType.Equals)) {
+                variant_value = self.parseExpr()
+            }
+
+            variants.push(EnumVariant{
+                .name = variant_name,
+                .value = variant_value,
+                .loc = variant_loc,
+                .payload_types = payload_types.to_slice(),
+                .payload_fields = payload_fields.to_slice(),
+                .has_payload = has_payload,
+            })
+
+            // Optional comma between variants
+            self.match(TokenType.Comma)
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after enum variants")
+
+        return makeEnumDeclStmt(name, variants.to_slice(), loc)
+    }
+
+    // Parse an impl block: impl Type { methods }
+    fn parseImplDecl(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwImpl, "Expected 'impl'")
+
+        // Type name
+        var impl_type: *TypeRef = self.parseType()
+
+        // Check for trait implementation: impl Trait for Type
+        var trait_type: ?*TypeRef = null
+        if (self.match(TokenType.KwFor)) {
+            trait_type = impl_type
+            impl_type = self.parseType()
+        }
+
+        // Methods
+        self.consume(TokenType.LeftBrace, "Expected '{' after impl type")
+
+        var methods = new List<*Stmt>
+        while (!self.check(TokenType.RightBrace) and !self.isAtEnd()) {
+            // Each method is a function declaration
+            if (self.check(TokenType.KwFn)) {
+                var method: *Stmt = self.parseFunctionDecl()
+                methods.push(method)
+            } else {
+                self.errorAtCurrent("Expected 'fn' in impl block")
+                self.advance()
+            }
+        }
+
+        self.consume(TokenType.RightBrace, "Expected '}' after impl methods")
+
+        return makeImplDeclStmt(impl_type, trait_type, methods.to_slice(), loc)
+    }
+
+    // Parse an import statement: import "module"
+    fn parseImportStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        self.consume(TokenType.KwImport, "Expected 'import'")
+
+        // Module path (string literal)
+        if (!self.check(TokenType.StringLiteral)) {
+            self.errorAtCurrent("Expected module path string")
+            return makeExprStmt(makeNullExpr(loc), loc)
+        }
+        var path: string = self.current.lexeme
+        self.advance()
+
+        return makeImportStmt(path, loc)
+    }
+
+    // Parse an expression statement
+    fn parseExpressionStmt(self: *Parser) *Stmt {
+        var loc: SourceLoc = SourceLoc.fromToken(self.current)
+        var expr: *Expr = self.parseExpr()
+
+        // Optional semicolon
+        self.match(TokenType.Semicolon)
+
+        return makeExprStmt(expr, loc)
+    }
 }
 
 // =============================================================================
 // Statement Constructors
 // =============================================================================
 
-fn makeExprStmt(expr: Expr, loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.ExpressionStmt, loc)
-    // TODO: Store expr
+fn makeExprStmt(expr: *Expr, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.ExpressionStmt, loc)
+    s.expr = expr
+    return s
 }
 
-fn makeVarDeclStmt(name: string, mutable: bool, loc: SourceLoc) Stmt {
+fn makeVarDeclStmt(name: string, mutable: bool, var_type: ?*TypeRef, var_init: ?*Expr, loc: SourceLoc) *Stmt {
     var kind: StmtKind = StmtKind.VarDecl
     if (!mutable) {
         kind = StmtKind.ConstDecl
@@ -2056,90 +2173,106 @@ fn makeVarDeclStmt(name: string, mutable: bool, loc: SourceLoc) Stmt {
     var s = makeDefaultStmt(kind, loc)
     s.var_name = name
     s.var_mutable = mutable
+    s.var_type = var_type
+    s.var_init = var_init
     return s
 }
 
-fn makeReturnStmt(loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.ReturnStmt, loc)
-    // TODO: Store return value
+fn makeReturnStmt(return_value: ?*Expr, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.ReturnStmt, loc)
+    s.return_value = return_value
+    return s
 }
 
-fn makeIfStmt(loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.IfStmt, loc)
-    // TODO: Store condition, then branch, else branch
+fn makeIfStmt(cond: *Expr, then_branch: *Stmt, else_branch: ?*Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.IfStmt, loc)
+    s.if_cond = cond
+    s.if_then = then_branch
+    s.if_else = else_branch
+    return s
 }
 
-fn makeWhileStmt(loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.WhileStmt, loc)
-    // TODO: Store condition, body
+fn makeWhileStmt(cond: *Expr, body: *Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.WhileStmt, loc)
+    s.while_cond = cond
+    s.while_body = body
+    return s
 }
 
-fn makeForStmt(var_name: string, loc: SourceLoc) Stmt {
+fn makeForStmt(var_name: string, iter: *Expr, body: *Stmt, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.ForStmt, loc)
     s.for_var = var_name
+    s.for_iter = iter
+    s.for_body = body
     return s
-    // TODO: Store iterator, body
 }
 
-fn makeBlockStmt(stmt_count: i64, loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.BlockStmt, loc)
-    // TODO: Store statements
+fn makeBlockStmt(stmts: []*Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.BlockStmt, loc)
+    s.block_stmts = stmts
+    return s
 }
 
-fn makeSwitchStmt(arm_count: i64, loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.SwitchStmt, loc)
-    // TODO: Store expression, arms
+fn makeSwitchStmt(switch_expr: *Expr, arms: []SwitchArm, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.SwitchStmt, loc)
+    s.switch_expr = switch_expr
+    s.switch_arms = arms
+    return s
 }
 
-fn makeBreakStmt(loc: SourceLoc) Stmt {
+fn makeBreakStmt(loc: SourceLoc) *Stmt {
     return makeDefaultStmt(StmtKind.BreakStmt, loc)
 }
 
-fn makeContinueStmt(loc: SourceLoc) Stmt {
+fn makeContinueStmt(loc: SourceLoc) *Stmt {
     return makeDefaultStmt(StmtKind.ContinueStmt, loc)
 }
 
-fn makeLoopStmt(loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.LoopStmt, loc)
-    // TODO: Store body
-}
-
-fn makeDeferStmt(loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.DeferStmt, loc)
-    // TODO: Store deferred expression
-}
-
-fn makeTryStmt(catch_var: string, loc: SourceLoc) Stmt {
-    var s = makeDefaultStmt(StmtKind.TryStmt, loc)
-    s.catch_var = catch_var
+fn makeLoopStmt(body: *Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.LoopStmt, loc)
+    s.loop_body = body
     return s
-    // TODO: Store try body, catch body
 }
 
-fn makeThrowStmt(loc: SourceLoc) Stmt {
-    return makeDefaultStmt(StmtKind.ThrowStmt, loc)
-    // TODO: Store thrown expression
+fn makeDeferStmt(expr: *Expr, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.DeferStmt, loc)
+    s.defer_expr = expr
+    return s
 }
 
-fn makeTestDeclStmt(name: string, loc: SourceLoc) Stmt {
+fn makeTryStmt(try_body: *Stmt, catch_var: string, catch_body: *Stmt, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.TryStmt, loc)
+    s.try_body = try_body
+    s.catch_var = catch_var
+    s.catch_body = catch_body
+    return s
+}
+
+fn makeThrowStmt(expr: *Expr, loc: SourceLoc) *Stmt {
+    var s = makeDefaultStmt(StmtKind.ThrowStmt, loc)
+    s.throw_expr = expr
+    return s
+}
+
+fn makeTestDeclStmt(name: string, body: *Stmt, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.TestDecl, loc)
     s.test_name = name
+    s.test_body = body
     return s
-    // TODO: Store body
 }
 
-fn makeUnionDeclStmt(name: string, field_count: i64, loc: SourceLoc) Stmt {
+fn makeUnionDeclStmt(name: string, fields: []Field, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.UnionDecl, loc)
     s.union_name = name
+    s.union_fields = fields
     return s
-    // TODO: Store fields
 }
 
-fn makeTypeAliasDeclStmt(name: string, loc: SourceLoc) Stmt {
+fn makeTypeAliasDeclStmt(name: string, alias_type: *TypeRef, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.TypeAliasDecl, loc)
     s.alias_name = name
+    s.alias_type = alias_type
     return s
-    // TODO: Store aliased type
 }
 
 // =============================================================================
@@ -2208,43 +2341,47 @@ fn parseBinary(s: string) i64 {
 // Declaration Statement Constructors
 // =============================================================================
 
-fn makeFunctionDeclStmt(name: string, param_count: i64, loc: SourceLoc) Stmt {
+fn makeFunctionDeclStmt(name: string, params: []Param, return_type: ?*TypeRef, body: ?*Stmt, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.FunctionDecl, loc)
     s.fn_name = name
+    s.fn_params = params
+    s.fn_return_type = return_type
+    s.fn_body = body
     return s
-    // TODO: Store params, body
 }
 
-fn makeStructDeclStmt(name: string, field_count: i64, loc: SourceLoc) Stmt {
+fn makeStructDeclStmt(name: string, fields: []Field, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.StructDecl, loc)
     s.struct_name = name
+    s.struct_fields = fields
     return s
-    // TODO: Store fields
 }
 
-fn makeEnumDeclStmt(name: string, variant_count: i64, loc: SourceLoc) Stmt {
+fn makeEnumDeclStmt(name: string, variants: []EnumVariant, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.EnumDecl, loc)
     s.enum_name = name
+    s.enum_variants = variants
     return s
-    // TODO: Store variants
 }
 
-fn makeImplDeclStmt(type_name: string, method_count: i64, loc: SourceLoc) Stmt {
+fn makeImplDeclStmt(impl_type: *TypeRef, trait_type: ?*TypeRef, methods: []*Stmt, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.ImplDecl, loc)
-    s.struct_name = type_name  // Reuse struct_name for impl type
+    s.impl_type = impl_type
+    s.impl_trait = trait_type
+    s.impl_methods = methods
     return s
-    // TODO: Store type, methods
 }
 
-fn makeImportStmt(path: string, loc: SourceLoc) Stmt {
+fn makeImportStmt(path: string, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.ImportStmt, loc)
     s.import_path = path
     return s
 }
 
-fn makeViewDeclStmt(name: string, base_field: string, offset: i64, loc: SourceLoc) Stmt {
+fn makeViewDeclStmt(name: string, view_type: *TypeRef, base_field: string, offset: i64, loc: SourceLoc) *Stmt {
     var s = makeDefaultStmt(StmtKind.ViewDecl, loc)
     s.view_name = name
+    s.view_type = view_type
     s.view_base_field = base_field
     s.view_offset = offset
     return s
@@ -2254,74 +2391,85 @@ fn makeViewDeclStmt(name: string, base_field: string, offset: i64, loc: SourceLo
 // Module-Level Parsing Entry Point
 // =============================================================================
 
-// Parse a complete module (file) and return all top-level declarations
-fn parserParseModule(p: *Parser) Module {
-    var mod = newModule()
+impl Parser {
+    // Parse a complete module (file) and return all top-level declarations
+    fn parseModule(self: *Parser) Module {
+        var mod = Module.init()
 
-    while (!parserIsAtEnd(p)) {
-        var parsed_stmt: ?Stmt = parserParseTopLevel(p)
-        if (parsed_stmt != null) {
-            mod.statements.push(parsed_stmt ?? makeDefaultStmt(StmtKind.ExpressionStmt, newSourceLoc(0, 0, 0, 0)))
+        while (!self.isAtEnd()) {
+            var parsed_stmt: ?*Stmt = self.parseTopLevel()
+            if (parsed_stmt != null) {
+                // Use coalescing with null-returning fallback for type compatibility
+                var stmt = parsed_stmt ?? makeDefaultStmt(StmtKind.ExpressionStmt, SourceLoc.init(0, 0, 0, 0))
+                mod.statements.push(stmt)
+            }
+
+            // If we're in panic mode, synchronize
+            if (self.panic_mode) {
+                self.synchronize()
+            }
         }
 
-        // If we're in panic mode, synchronize
-        if (p.panic_mode) {
-            parserSynchronize(p)
+        // Copy errors to module
+        var i: i64 = 0
+        while (i < self.errors.len()) {
+            mod.errors.push(self.errors.get(i))
+            i += 1
         }
+
+        mod.has_errors = self.had_error
+        return mod
     }
 
-    mod.has_errors = p.had_error
-    return mod
-}
+    // Parse a single top-level declaration
+    fn parseTopLevel(self: *Parser) ?*Stmt {
+        const tok_type = self.peek()
 
-// Parse a single top-level declaration
-fn parserParseTopLevel(p: *Parser) ?Stmt {
-    const tok_type = parserPeek(p)
+        switch (tok_type) {
+            TokenType.KwFn => {
+                return self.parseFunctionDecl()
+            }
+            TokenType.KwStruct => {
+                return self.parseStructDecl()
+            }
+            TokenType.KwUnion => {
+                return self.parseUnionDecl()
+            }
+            TokenType.KwEnum => {
+                return self.parseEnumDecl()
+            }
+            TokenType.KwTrait => {
+                return self.parseTraitDecl()
+            }
+            TokenType.KwImpl => {
+                return self.parseImplDecl()
+            }
+            TokenType.KwConst => {
+                return self.parseConstDecl()
+            }
+            TokenType.KwVar => {
+                return self.parseVarDecl()
+            }
+            TokenType.KwType => {
+                return self.parseTypeAliasDecl()
+            }
+            TokenType.KwImport => {
+                return self.parseImportStmt()
+            }
+            TokenType.KwTest => {
+                return self.parseTestDecl()
+            }
+            TokenType.KwPub => {
+                return self.parsePubDecl()
+            }
+            TokenType.KwComptime => {
+                return self.parseComptimeStmt()
+            }
+        }
 
-    switch (tok_type) {
-        TokenType.KwFn => {
-            return parseFunctionDecl(p)
-        }
-        TokenType.KwStruct => {
-            return parseStructDecl(p)
-        }
-        TokenType.KwUnion => {
-            return parseUnionDecl(p)
-        }
-        TokenType.KwEnum => {
-            return parseEnumDecl(p)
-        }
-        TokenType.KwTrait => {
-            return parseTraitDecl(p)
-        }
-        TokenType.KwImpl => {
-            return parseImplDecl(p)
-        }
-        TokenType.KwConst => {
-            return parseConstDecl(p)
-        }
-        TokenType.KwVar => {
-            return parseVarDecl(p)
-        }
-        TokenType.KwType => {
-            return parseTypeAliasDecl(p)
-        }
-        TokenType.KwImport => {
-            return parseImportStmt(p)
-        }
-        TokenType.KwTest => {
-            return parseTestDecl(p)
-        }
-        TokenType.KwPub => {
-            return parsePubDecl(p)
-        }
-        TokenType.KwComptime => {
-            return parseComptimeStmt(p)
-        }
+        // Unexpected token at top level
+        self.errorAtCurrent("unexpected token at top level")
+        self.advance()
+        return null
     }
-
-    // Unexpected token at top level
-    parserErrorAtCurrent(p, "Expected 'fn', 'struct', 'enum', 'trait', 'impl', 'const', 'var', 'type', 'import', 'test', or 'pub' at top level")
-    parserAdvance(p)
-    return null
 }
