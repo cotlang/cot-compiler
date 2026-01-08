@@ -85,6 +85,9 @@ const OP_LIST_POP: i64 = 239
 const OP_DEBUG_LINE: i64 = 241
 const OP_LIST_GET: i64 = 253
 const OP_LIST_SET: i64 = 255
+const OP_SET_ERROR_HANDLER: i64 = 106
+const OP_CLEAR_ERROR_HANDLER: i64 = 107
+const OP_THROW: i64 = 108
 
 // =============================================================================
 // Constant Pool
@@ -766,6 +769,25 @@ fn emitDebugLine(e: BytecodeEmitter, line: i64) {
     emitU16(e, line)
 }
 
+fn emitSetErrorHandler(e: BytecodeEmitter, target_block: i64) {
+    // Format: [opcode][offset_lo][offset_hi] = 3 bytes
+    emitOpcode(e, OP_SET_ERROR_HANDLER)
+    emitU16(e, 0)  // Placeholder, will be patched
+    emitAddPendingJump(e, target_block, false)
+}
+
+fn emitClearErrorHandler(e: BytecodeEmitter) {
+    // Format: [opcode] = 1 byte
+    emitOpcode(e, OP_CLEAR_ERROR_HANDLER)
+}
+
+fn emitThrow(e: BytecodeEmitter, rs: i64) {
+    // Format: [opcode][rs:4|0][0] = 3 bytes
+    emitOpcode(e, OP_THROW)
+    emitByte(e, packRegs(rs, 0))
+    emitByte(e, 0)
+}
+
 fn emitHalt(e: BytecodeEmitter) {
     emitOpcode(e, OP_HALT)
 }
@@ -1133,6 +1155,9 @@ const IR_MAP_DELETE: i64 = 65
 const IR_MAP_LEN: i64 = 66
 const IR_SELECT: i64 = 67
 const IR_DEBUG_LINE: i64 = 68
+const IR_SET_HANDLER: i64 = 69
+const IR_CLEAR_HANDLER: i64 = 70
+const IR_ERR_THROW: i64 = 71
 
 // Comparison condition codes (must match ir.cot)
 const COND_EQ: i64 = 0
@@ -1505,6 +1530,22 @@ fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op
 
         IR_DEBUG_LINE => {
             emitDebugLine(e, line)
+        }
+
+        IR_SET_HANDLER => {
+            // Set error handler - target_block contains the catch block
+            emitSetErrorHandler(e, target_block)
+        }
+
+        IR_CLEAR_HANDLER => {
+            // Clear error handler
+            emitClearErrorHandler(e)
+        }
+
+        IR_ERR_THROW => {
+            // Throw error value
+            const rs = tcGetReg(ctx, op1_id)
+            emitThrow(e, rs)
         }
 
         else => {

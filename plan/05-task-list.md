@@ -327,10 +327,13 @@ Note: Closures require runtime support. Deferred to bootstrap phase.
 ### 6.2 Compiler Driver
 - [x] Create minimal driver.cot demonstrating lexer pipeline
 - [x] Verify tokenization works with switch statements
-- [ ] Integrate parser module into driver
-- [ ] Integrate type checker module into driver
-- [ ] Integrate IR lowering module into driver
-- [ ] Integrate bytecode emission module into driver
+- [x] Integrate parser module into driver
+- [x] Integrate type checker module into driver
+- [x] Integrate IR lowering module into driver
+- [x] Integrate bytecode emission module into driver
+- [x] **Driver compiles and runs successfully** (2026-01-08)
+  - Fixed `lowerModule` signature: `[]Stmt` → `[]*Stmt` for pointer slices
+  - Driver correctly processes command-line args via `process_args()`
 
 ### 6.3 Self-Compilation
 - [ ] Self-compile token.cot
@@ -350,7 +353,7 @@ Note: Closures require runtime support. Deferred to bootstrap phase.
 
 ---
 
-## PROGRESS SUMMARY (REVISED 2026-01-07)
+## PROGRESS SUMMARY (REVISED 2026-01-08)
 
 | Phase | Status | Cot Lines | Zig Reference | Coverage |
 |-------|--------|-----------|---------------|----------|
@@ -360,10 +363,18 @@ Note: Closures require runtime support. Deferred to bootstrap phase.
 | Phase 3: Type System | ✅ COMPLETE | 2,775 | ~2,211 | 100% |
 | Phase 4: IR/Lowering | ✅ COMPLETE | 2,292 | ~16,879 | 100% |
 | Phase 5: Bytecode Emit | ✅ COMPLETE | 2,137 | ~3,500 | 100% |
-| Phase 6: Bootstrap | 🟡 IN PROGRESS | ~300 | - | 10% |
+| Phase 6: Bootstrap | 🟢 DRIVER WORKING | ~300 | - | 40% |
 | **Total** | | **~11,100** | **~26,721** | |
 
-**All compiler phases are now code-complete.** Bootstrap testing in progress.
+**All compiler phases are now code-complete.** Driver compiles and runs successfully.
+
+### Phase 6 Bootstrap Progress (2026-01-08)
+- ✅ Driver compiles and executes
+- ✅ `process_args()` returns `List<string>` correctly
+- ✅ Command-line argument processing works
+- ✅ String concatenation with list operations fixed
+- ✅ Zig and Rust runtimes synchronized
+- ⏳ Next: Self-compilation of compiler modules
 
 ### Phase 3 Completion (2026-01-07)
 - **types.cot**: 892 lines
@@ -391,3 +402,8 @@ See `08-detailed-requirements.md` for comprehensive breakdown.
 6. **Register spill bug with `and` operator** - `emitUserCall` only spilled values in r15, but operations like `log_not` store results in other registers (e.g., r1). When a subsequent call clobbered those registers, expressions like `!f() and g()` produced wrong results. Fixed by spilling `last_result` regardless of which register it's in and removing from `reg_alloc` so `getValueInReg` reloads from spill slot.
 7. **Binary expression register collision** - In `emitBinaryArith` and `emitIcmp`, when LHS was in r1 (last_result), loading RHS into r1 would spill LHS, making the LHS register stale. Fixed by choosing a different temp_reg for RHS if LHS is in r1.
 8. **Stack-based argument overflow for >15 args** - Functions with more than 15 arguments now work correctly. Added push_arg, push_arg_reg, pop_arg opcodes. Modified call opcode format to [argc:4|stack_argc:4]. Overflow args (16+) are pushed to stack before call, callee copies them to locals. Fixed in both Zig and Rust VMs.
+9. **Generic return type for `process_args()`** - Added compile-time static types in `lower_expr.zig` for `List<string>` return type. Bootstrap compiler now correctly infers return type of `process_args()`.
+10. **ARC List type handling** - Fixed `arc.zig` to handle List (type_id 19) release. Added List import and proper deallocation logic for list items.
+11. **`process_args()` ARC allocation** - Changed from `allocator.create()` to `arc.create()` so returned List has proper ARC header for memory management.
+12. **String concatenation with `list_get` clobbering** - `println(string(i) + ": " + args.get(i))` produced doubled output because `list_get` used hardcoded `dest_reg=2` and clobbered intermediate concat result. Fixed by adding `prepareDestReg()` function to spill values BEFORE instructions clobber destination registers. Applied to `emitListGet()` and `emitListPop()`.
+13. **Rust runtime `process_args()` parity** - Updated Rust runtime to return `List<string>` instead of newline-joined string. Added `ListCreator` and `ListPusher` callback types to NativeContext. Added `list_creator_fn()` and `list_pusher_fn()` bridge functions to VM. Updated `needs_arc()` to exclude registry-based List type.

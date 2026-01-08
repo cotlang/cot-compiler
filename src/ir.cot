@@ -241,6 +241,8 @@ enum IROp {
     SliceNew,        // Create slice from array/slice[start..end]
 
     // Error handling
+    SetHandler,      // Set error handler (target block for catch)
+    ClearHandler,    // Clear/pop error handler (end of try block)
     ErrThrow,        // Throw an error
 
     // Sum type (variant) operations
@@ -271,6 +273,8 @@ impl IROp {
             IROp.BrIf => { return false }
             IROp.BrTable => { return false }
             IROp.Ret => { return false }
+            IROp.SetHandler => { return false }
+            IROp.ClearHandler => { return false }
             IROp.ErrThrow => { return false }
             IROp.ArrayStore => { return false }
             IROp.ListPush => { return false }

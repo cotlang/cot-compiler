@@ -1,6 +1,37 @@
 # Implementation Plan: Generic Type Support for Built-in Types
 
-## Problem Statement
+**Status: RESOLVED (2026-01-08)**
+
+The issue was fixed in the **Zig bootstrap compiler** rather than the self-hosted compiler. This approach is simpler and doesn't require the self-hosted type checker to understand generic types yet.
+
+## Solution Implemented
+
+Added compile-time static types in `cot/src/ir/lower_expr.zig` for builtin functions that return generic types:
+
+```zig
+// Static type definitions for List<string>
+const static_string_type: ir.Type = .string;
+const list_string_type: ir.ListType = .{ .element_type = &static_string_type };
+const ir_list_string_type: ir.Type = .{ .list = &list_string_type };
+
+pub fn getBuiltinReturnType(name: []const u8, args: []const ir.Value) ir.Type {
+    if (std.mem.eql(u8, name, "process_args")) {
+        return ir_list_string_type;
+    }
+    if (std.mem.eql(u8, name, "write_bytes")) {
+        return .bool;
+    }
+    // ... rest of function
+}
+```
+
+## Additional Fixes Required
+
+1. **ARC List handling** - `arc.zig` needed to handle List type (type_id 19) for proper memory management
+2. **ARC allocation** - `process_args()` in `system.zig` now uses `arc.create()` instead of `allocator.create()`
+3. **Rust runtime parity** - Updated `cot-rs` to return `List<string>` instead of string
+
+## Original Problem Statement (Kept for Reference)
 
 The self-hosted compiler's type checker cannot properly type-check code using generic types like `List<string>`. This blocks the driver from compiling because:
 
@@ -9,11 +40,17 @@ var args = process_args()  // Returns List<string>
 var cmd = args.get(1)      // Type checker sees: i64.get(1) -> void
 ```
 
-## Root Cause
+## Original Root Cause Analysis
 
 1. **Builtin registration is incomplete** - `registerBuiltins()` only registers return type IDs, not full function signatures
 2. **No generic type definitions** - `List<T>` is not registered in the TypeRegistry
 3. **No method signatures for generics** - The type checker doesn't know `List<T>.get(i64)` returns `T`
+
+---
+
+## Future Work (Self-Hosted Compiler)
+
+When the self-hosted compiler needs to handle generic types natively, the plan below can be followed:
 
 ## Required Changes
 

@@ -5,6 +5,20 @@
 **Current State:** Zig compiler is ~96K lines across 186 files.
 **Target:** Cot compiler will be ~8-12K lines (compiler only, no runtime).
 
+## Current Status (2026-01-08)
+
+| Phase | Status |
+|-------|--------|
+| Phase 0: Prerequisites | ✅ COMPLETE |
+| Phase 1: Lexer | ✅ COMPLETE (652 lines) |
+| Phase 2: Parser | ✅ COMPLETE (2,242 lines) |
+| Phase 3: Type System | ✅ COMPLETE (2,775 lines) |
+| Phase 4: IR/Lowering | ✅ COMPLETE (2,292 lines) |
+| Phase 5: Bytecode Emit | ✅ COMPLETE (2,137 lines) |
+| Phase 6: Bootstrap | 🟢 DRIVER WORKING |
+
+**Driver compiles and runs!** The self-hosted compiler driver can process command-line arguments and is ready for self-compilation testing.
+
 ## Plan Documents
 
 1. [Gap Analysis](./01-gap-analysis.md) - What Cot needs vs what exists
@@ -12,7 +26,9 @@
 3. [Architecture](./03-architecture.md) - Compiler structure in Cot
 4. [Phases](./04-phases.md) - Implementation phases with milestones
 5. [Task List](./05-task-list.md) - Granular task breakdown
-6. [Feature Parity](./12-feature-parity.md) - **ACTIVE** - Language features needing implementation
+6. [Feature Parity](./12-feature-parity.md) - Language features needing implementation
+7. [Generic Type Support](./12-generic-type-support.md) - ✅ RESOLVED - List<string> support
+8. [Compiler Bugs](./13-compiler-bugs.md) - Bug tracking and fixes
 
 ## Key Insight
 

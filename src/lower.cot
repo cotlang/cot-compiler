@@ -2398,7 +2398,7 @@ fn lowerDeferStmt(l: Lowerer, stmt: Stmt) {
 }
 
 fn lowerTryStmt(l: Lowerer, stmt: Stmt) {
-    // Try/catch statement
+    // Try/catch statement with proper error handler linkage
     const try_block = lowerCreateBlock(l, "try")
     const catch_block = lowerCreateBlock(l, "catch")
     const exit_block = lowerCreateBlock(l, "try_exit")
@@ -2411,16 +2411,25 @@ fn lowerTryStmt(l: Lowerer, stmt: Stmt) {
     // Try block
     lowerSwitchBlock(l, try_block)
     lowerEnterScope(l)
+
+    // Set error handler to jump to catch block on throw
+    var set_handler = newIRInst(IROp.SetHandler)
+    set_handler.target_block = catch_block
+    lowerEmit(l, set_handler)
+
     if (stmt.try_body != null) {
         lowerStmt(l, stmt.try_body.*)
     }
     lowerExitScope(l)
 
-    // Jump to exit (no error)
+    // Clear error handler after try body (before jumping to exit)
     if (l.current_func_idx >= 0) {
         const func = lowerGetCurrentFunc(l)
         const tb = fnGetBlock(func, try_block)
         if (not blockIsTerminated(tb)) {
+            var clear_handler = newIRInst(IROp.ClearHandler)
+            lowerEmit(l, clear_handler)
+
             jmp = newIRInst(IROp.Jump)
             jmp.target_block = exit_block
             lowerEmit(l, jmp)
@@ -2431,13 +2440,14 @@ fn lowerTryStmt(l: Lowerer, stmt: Stmt) {
     lowerSwitchBlock(l, catch_block)
     lowerEnterScope(l)
 
-    // Register catch variable if present
+    // Register catch variable if present - error value is in r0
     if (stmt.catch_var != "") {
         const err_id = lowerNewValue(l)
         var alloc_inst = newIRInst(IROp.Alloca)
         alloc_inst.result_id = err_id
         lowerEmit(l, alloc_inst)
         lowerDefineVar(l, stmt.catch_var, err_id)
+        // TODO: Store r0 (error value) into the catch variable
     }
 
     if (stmt.catch_body != null) {

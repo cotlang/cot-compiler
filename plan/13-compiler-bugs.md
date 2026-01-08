@@ -71,6 +71,52 @@ fn main() {
 
 ---
 
+---
+
+## Bug 5: String Concatenation with list_get Clobbering - FIXED ✅
+
+**Reproduction:**
+```cot
+fn main() {
+    var args = process_args()
+    var i: i64 = 0
+    println(string(i) + ": " + args.get(i))  // Output was: "0: 0: /path/to/program"
+}                                             // Expected:  "0: /path/to/program"
+```
+
+**Root cause:** `emitListGet` used hardcoded `dest_reg = 2`. The intermediate string concatenation result `"0: "` was in r2. When `list_get` executed, it clobbered r2 with the list element BEFORE `setLastResult()` could spill the old value. The second `str_concat` then used the wrong value.
+
+**Fix:** Added `prepareDestReg()` function to `emit_bytecode.zig` that spills any existing value in a destination register BEFORE the instruction clobbers it. Applied to:
+- `emitListGet()` at `emit_instruction.zig:2106`
+- `emitListPop()` at `emit_instruction.zig:2061`
+
+**Files modified:**
+- `cot/src/ir/emit_bytecode.zig` - Added `prepareDestReg()` function
+- `cot/src/ir/emit_instruction.zig` - Call `prepareDestReg()` before `list_get` and `list_pop`
+
+---
+
+## Bug 6: Rust Runtime process_args() Return Type Mismatch - FIXED ✅
+
+**Problem:** Rust runtime's `process_args()` returned a newline-joined string, while Zig runtime returned `List<string>`. This caused bytecode compiled by Zig to fail on Rust runtime.
+
+**Fix:** Updated Rust runtime to return `List<string>`:
+1. Added `ListCreator` and `ListPusher` callback types to `NativeContext`
+2. Added `list_creator_fn()` and `list_pusher_fn()` bridge functions to VM
+3. Updated `process_args()` to use `ctx.create_list()` and `ctx.list_push()`
+4. Updated `needs_arc()` to exclude registry-based List type (type_id 19)
+5. Updated `arc.rs` release to skip registry-based lists
+
+**Files modified:**
+- `cot-rs/src/native/mod.rs` - Extended NativeContext
+- `cot-rs/src/native/system.rs` - Updated process_args()
+- `cot-rs/src/vm/mod.rs` - Added list helper functions
+- `cot-rs/src/vm/ops_native.rs` - Updated with_vm() calls
+- `cot-rs/src/value.rs` - Updated needs_arc()
+- `cot-rs/src/arc.rs` - Fixed List handling
+
+---
+
 ## Priority Order
 
 1. **Bug 1 + Bug 2** - These are related (same error pathway) - fix together
@@ -81,3 +127,4 @@ fn main() {
 
 - `/Users/johnc/cotlang/cot-compiler/src/test_field3.cot` - Reproduces bugs 1 & 2
 - `/tmp/test_field_access2.cot` - Reproduces bug 3
+- `/tmp/bug_inline.cot` - Reproduces bug 5 (string concat with list_get)

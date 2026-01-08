@@ -22,65 +22,67 @@ import "lower"
 import "emit"
 
 fn main() i64 {
+    println("[driver] Starting main...")
     // Get command-line arguments
     var args = process_args()
 
-    // Need at least: program_name, "compile", source_file
-    if (args.len() < 3) {
+    // Find "compile" command in args (handles: driver.cbo compile foo.cot
+    // or: cot trace driver.cbo -- compile foo.cot)
+    var compile_idx: i64 = -1
+    var i: i64 = 0
+    while (i < args.len()) {
+        if (args.get(i) == "compile") {
+            compile_idx = i
+        }
+        i += 1
+    }
+
+    if (compile_idx < 0 or compile_idx + 1 >= args.len()) {
         printUsage()
         return 1
     }
 
-    // Skip program name (args[0])
-    var cmd = args.get(1)
+    // Get source file (next arg after "compile")
+    var source_file = args.get(compile_idx + 1)
 
-    if (cmd != "compile") {
-        println("Unknown command: " + cmd)
-        printUsage()
-        return 1
-    }
+    // Get output file (check remaining args for -o flag)
+    var output_file = getOutputPathFrom(source_file, args, compile_idx + 2)
 
-    // Get source file
-    var source_file = args.get(2)
-
-    // Get output file (default: replace .cot with .cbo)
-    var output_file = getOutputPath(source_file, args)
-
-    println("=== Cot Self-Hosted Compiler ===")
-    println("Source: " + source_file)
-    println("Output: " + output_file)
-    println("")
+    println("[driver] === Cot Self-Hosted Compiler ===")
+    println("[driver] Source: " + source_file)
+    println("[driver] Output: " + output_file)
+    println("[driver]")
 
     // Phase 1: Read source file
-    println("Reading source file...")
+    println("[driver] Reading source file...")
     var source = read_file(source_file)
     if (len(source) == 0) {
-        println("Error: Could not read file: " + source_file)
+        println("[driver] Error: Could not read file: " + source_file)
         return 1
     }
-    println("  Read " + string(len(source)) + " bytes")
+    println("[driver]   Read " + string(len(source)) + " bytes")
 
     // Phase 2: Parse
-    println("")
-    println("=== Phase 1: Parsing ===")
+    println("[driver]")
+    println("[driver] === Phase 1: Parsing ===")
     var parser = Parser.create(source)
     var mod = parser.parseModule()
 
     if (mod.has_errors) {
-        println("Parse errors:")
+        println("[driver] Parse errors:")
         var i: i64 = 0
         while (i < mod.errors.len()) {
-            println("  " + mod.errors.get(i))
+            println("[driver]   " + mod.errors.get(i))
             i += 1
         }
         return 1
     }
 
-    println("  Parsed " + string(mod.statements.len()) + " top-level statements")
+    println("[driver]   Parsed " + string(mod.statements.len()) + " top-level statements")
 
     // Phase 3: Type Check
-    println("")
-    println("=== Phase 2: Type Checking ===")
+    println("[driver]")
+    println("[driver] === Phase 2: Type Checking ===")
     var stmts = mod.statements.to_slice()
     var tc = typeCheck(stmts)
 
@@ -168,9 +170,9 @@ fn printUsage() {
     println("  -o <file>  Output file (default: <source>.cbo)")
 }
 
-fn getOutputPath(source_file: string, args: List<string>) string {
-    // Check for -o flag
-    var i: i64 = 3
+fn getOutputPathFrom(source_file: string, args: List<string>, start_idx: i64) string {
+    // Check for -o flag starting from start_idx
+    var i: i64 = start_idx
     while (i < args.len()) {
         if (args.get(i) == "-o" and i + 1 < args.len()) {
             return args.get(i + 1)

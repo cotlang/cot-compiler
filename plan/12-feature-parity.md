@@ -172,7 +172,7 @@ let d = p.distance()  // Should resolve to f64
 
 ---
 
-### 6. Try/Catch Error Propagation
+### 6. Try/Catch Error Propagation ✅ COMPLETE (2026-01-08)
 
 **Syntax from SYNTAX.md:**
 ```cot
@@ -189,15 +189,15 @@ fn caller() {
 }
 ```
 
-**Current State:** `lowerTryStmt` creates try/catch blocks but no error handler linkage.
+**Implementation Complete:**
 
-**Files to Change:**
-
-| File | Location | Current | Required |
-|------|----------|---------|----------|
-| `lower.cot` | `lowerTryStmt` lines 1472-1533 | Creates blocks, no linkage | Set up exception handler, link throw to catch |
-| `lower.cot` | `lowerThrowStmt` | Emits `ErrThrow` | Connect to active try/catch handler |
-| `ir.cot` | Error handling | `IROp.ErrThrow` exists | May need `IROp.SetHandler`, `IROp.ClearHandler` |
+| File | Changes |
+|------|---------|
+| `ir.cot` | Added `IROp.SetHandler` and `IROp.ClearHandler` |
+| `emit.cot` | Added `IR_SET_HANDLER`, `IR_CLEAR_HANDLER`, `IR_ERR_THROW` constants; `emitSetErrorHandler`, `emitClearErrorHandler`, `emitThrow` functions |
+| `lower.cot` | Updated `lowerTryStmt` to emit `SetHandler` before try body, `ClearHandler` after |
+| Zig VM | Implemented `ErrorHandlerStack` for nested try/catch; fixed `clear_error_handler` IP increment bug |
+| Rust VM | Added `ErrorHandler` struct and `error_handlers: Vec<ErrorHandler>` for nested support |
 
 ---
 
@@ -308,10 +308,13 @@ comptime if (DEBUG) {
   - [x] Wire up closure opcodes in emit.cot
   - [x] Test: Simple closures capture variables (`double(5)=10`, `triple(7)=21`)
 
-- [ ] **Try/Catch**
-  - [ ] Link throw to active catch handler
-  - [ ] Implement handler stack in lowerer
-  - [ ] Test: Exceptions propagate to catch blocks
+- [x] **Try/Catch** ✅ (2026-01-08)
+  - [x] Add IROp.SetHandler and IROp.ClearHandler to ir.cot
+  - [x] Add error handler bytecode emission to emit.cot
+  - [x] Update lowerTryStmt to emit SetHandler before try body, ClearHandler after
+  - [x] Implement nested handler stack in Zig VM (vm.zig, vm_opcodes.zig)
+  - [x] Implement nested handler stack in Rust VM (cot-rs/src/vm/)
+  - [x] Test: Exceptions propagate to catch blocks (nested try/catch works)
 
 ### Medium Term (P2)
 
