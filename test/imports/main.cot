@@ -1,0 +1,10 @@
+// Main module for testing imports
+
+import "helper"
+
+fn main() i64 {
+    var x = helperAdd(10, 20)
+    var y = helperMul(x, 2)
+    println(string(y))
+    return 0
+}

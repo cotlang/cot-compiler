@@ -1,0 +1,335 @@
+// Module system for the Cot self-hosted compiler
+//
+// Provides multi-file compilation support:
+// - Module resolution (import path -> file path)
+// - Module loading and caching
+// - Dependency ordering (topological sort)
+// - Cycle detection
+//
+// MVP implementation for self-hosting. Supports:
+//   import "token"      -> ./token.cot (same directory)
+//   import "./utils"    -> ./utils.cot (explicit relative)
+
+import "token"
+import "lexer"
+import "ast"
+import "parser"
+
+// =============================================================================
+// Loaded Module Definition
+// =============================================================================
+
+// LoadedModule represents a source file being compiled
+// (Named to avoid collision with ast.Module which is the parsed AST)
+struct LoadedModule {
+    path: string,              // Import path (e.g., "token")
+    source_path: string,       // File system path (e.g., "./token.cot")
+    source: string,            // Source code
+    statements: List<*Stmt>,   // Parsed statements (from ast.Module)
+    imports: List<string>,     // Import paths this module depends on
+    is_parsed: bool,           // True after parsing
+    is_checked: bool,          // True after type checking
+    has_error: bool,           // True if any phase failed
+}
+
+impl LoadedModule {
+    fn create(path: string, source_path: string) LoadedModule {
+        return LoadedModule{
+            .path = path,
+            .source_path = source_path,
+            .source = "",
+            .statements = new List<*Stmt>,
+            .imports = new List<string>,
+            .is_parsed = false,
+            .is_checked = false,
+            .has_error = false,
+        }
+    }
+}
+
+// =============================================================================
+// Module Cache
+// =============================================================================
+
+struct ModuleCache {
+    modules: List<*LoadedModule>,    // All loaded modules (pointers)
+    module_paths: List<string>,      // Index matches modules list
+    base_dir: string,                // Base directory for resolution
+    errors: List<string>,            // Accumulated errors
+}
+
+impl ModuleCache {
+    fn create(base_dir: string) *ModuleCache {
+        return new ModuleCache{
+            .modules = new List<*LoadedModule>,
+            .module_paths = new List<string>,
+            .base_dir = base_dir,
+            .errors = new List<string>,
+        }
+    }
+
+    // Check if a module is already loaded
+    fn has(self: *ModuleCache, path: string) bool {
+        return self.getIndex(path) >= 0
+    }
+
+    // Get the index of a module by path (returns -1 if not found)
+    fn getIndex(self: *ModuleCache, path: string) i64 {
+        var i: i64 = 0
+        while (i < self.module_paths.len()) {
+            if (self.module_paths.get(i) == path) {
+                return i
+            }
+            i += 1
+        }
+        return -1
+    }
+
+    // Get a module by path (returns null if not found)
+    fn get(self: *ModuleCache, path: string) ?*LoadedModule {
+        var idx = self.getIndex(path)
+        if (idx >= 0) {
+            return self.modules.get(idx)
+        }
+        return null
+    }
+
+    // Add a module to the cache
+    fn add(self: *ModuleCache, mod: *LoadedModule) {
+        self.module_paths.push(mod.path)
+        self.modules.push(mod)
+    }
+
+    // Resolve an import path to a file system path
+    fn resolve(self: *ModuleCache, import_path: string) string {
+        println("[resolve] import_path: " + import_path)
+        println("[resolve] base_dir: " + self.base_dir)
+        // Handle explicit relative paths
+        if (startsWith(import_path, "./") or startsWith(import_path, "../")) {
+            var result = joinPath(self.base_dir, import_path + ".cot")
+            println("[resolve] relative result: " + result)
+            return result
+        }
+
+        // Simple case: same directory
+        var result = joinPath(self.base_dir, import_path + ".cot")
+        println("[resolve] simple result: " + result)
+        return result
+    }
+
+    // Load a module (read + parse), returns success
+    fn load(self: *ModuleCache, import_path: string) bool {
+        println("[load] loading: " + import_path)
+        // Already loaded?
+        if (self.has(import_path)) {
+            println("[load] already loaded")
+            return true
+        }
+
+        // Resolve to file path
+        println("[load] resolving...")
+        var file_path = self.resolve(import_path)
+        println("[load] file_path: " + file_path)
+
+        // Read the file
+        println("[load] reading file...")
+        var source = read_file(file_path)
+        println("[load] got source, checking len...")
+        if (len(source) == 0) {
+            self.errors.push("Could not read module: " + import_path + " (" + file_path + ")")
+            return false
+        }
+
+        // Create module entry (heap allocated)
+        var mod = new LoadedModule{
+            .path = import_path,
+            .source_path = file_path,
+            .source = source,
+            .statements = new List<*Stmt>,
+            .imports = new List<string>,
+            .is_parsed = false,
+            .is_checked = false,
+            .has_error = false,
+        }
+
+        // Parse the module
+        var parser = Parser.create(source)
+        var parsed = parser.parseModule()
+
+        if (parsed.has_errors) {
+            self.errors.push("Parse errors in module: " + import_path)
+            var i: i64 = 0
+            while (i < parsed.errors.len()) {
+                self.errors.push("  " + parsed.errors.get(i))
+                i += 1
+            }
+            mod.has_error = true
+            self.add(mod)
+            return false
+        }
+
+        // Copy statements and extract import dependencies
+        var i: i64 = 0
+        while (i < parsed.statements.len()) {
+            var stmt = parsed.statements.get(i)
+            mod.statements.push(stmt)
+            if (stmt.kind == StmtKind.ImportStmt) {
+                mod.imports.push(stmt.import_path)
+            }
+            i += 1
+        }
+        mod.is_parsed = true
+
+        // Add to cache
+        self.add(mod)
+
+        return true
+    }
+
+    // Recursively load a module and all its dependencies
+    fn loadWithDeps(self: *ModuleCache, import_path: string) bool {
+        // Load this module first
+        if (!self.load(import_path)) {
+            return false
+        }
+
+        // Get the module index we just loaded
+        var idx = self.getIndex(import_path)
+        if (idx < 0) {
+            return false
+        }
+
+        // Recursively load dependencies
+        var mod = self.modules.get(idx)
+        var i: i64 = 0
+        while (i < mod.imports.len()) {
+            var dep_path = mod.imports.get(i)
+            if (!self.loadWithDeps(dep_path)) {
+                return false
+            }
+            i += 1
+        }
+
+        return true
+    }
+
+    // Get modules in dependency order (dependencies first)
+    // Uses topological sort with cycle detection
+    fn getCompileOrder(self: *ModuleCache) List<string> {
+        var result = new List<string>
+        var visited = new List<string>
+        var in_progress = new List<string>
+
+        // Visit all modules starting from each one
+        var i: i64 = 0
+        while (i < self.module_paths.len()) {
+            var path = self.module_paths.get(i)
+            if (!self.visit(path, visited, in_progress, result)) {
+                // Cycle detected, error already recorded
+                return result
+            }
+            i += 1
+        }
+
+        return result
+    }
+
+    // Helper for topological sort
+    fn visit(self: *ModuleCache, path: string, visited: *List<string>,
+             in_progress: *List<string>, result: *List<string>) bool {
+        // Already fully processed?
+        if (listContains(visited, path)) {
+            return true
+        }
+
+        // Currently being processed? That's a cycle!
+        if (listContains(in_progress, path)) {
+            self.errors.push("Import cycle detected involving: " + path)
+            return false
+        }
+
+        // Mark as in progress
+        in_progress.push(path)
+
+        // Get the module index
+        var idx = self.getIndex(path)
+        if (idx < 0) {
+            return true  // Module not loaded, skip
+        }
+
+        // Visit all dependencies first
+        var mod = self.modules.get(idx)
+        var i: i64 = 0
+        while (i < mod.imports.len()) {
+            var dep = mod.imports.get(i)
+            if (!self.visit(dep, visited, in_progress, result)) {
+                return false
+            }
+            i += 1
+        }
+
+        // Done with this node
+        visited.push(path)
+        result.push(path)
+
+        return true
+    }
+
+    // Get the number of loaded modules
+    fn count(self: *ModuleCache) i64 {
+        return self.modules.len()
+    }
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+// Check if a string starts with a prefix
+fn startsWith(s: string, prefix: string) bool {
+    if (len(s) < len(prefix)) {
+        return false
+    }
+    // Compare prefix directly using slice
+    return s[0..len(prefix)] == prefix
+}
+
+// Get the directory part of a path
+fn dirname(path: string) string {
+    var i = len(path) - 1
+    while (i >= 0) {
+        var ch = path[i..i + 1]
+        if (ch == "/") {
+            if (i == 0) {
+                return "/"
+            }
+            return path[0..i]
+        }
+        i -= 1
+    }
+    return "."
+}
+
+// Join two path components
+fn joinPath(dir: string, file: string) string {
+    if (len(dir) == 0 or dir == ".") {
+        return file
+    }
+    var last_ch = dir[len(dir) - 1..len(dir)]
+    if (last_ch == "/") {
+        return dir + file
+    }
+    return dir + "/" + file
+}
+
+// Check if a list contains a string
+fn listContains(list: *List<string>, value: string) bool {
+    var i: i64 = 0
+    while (i < list.len()) {
+        if (list.get(i) == value) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}

@@ -1,0 +1,9 @@
+// Helper module for testing imports
+
+fn helperAdd(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn helperMul(a: i64, b: i64) i64 {
+    return a * b
+}

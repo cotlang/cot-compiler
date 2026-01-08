@@ -1,0 +1,38 @@
+// Test struct with List fields and pointer return
+
+struct Cache {
+    items: List<string>,
+    name: string,
+    count: i64,
+}
+
+impl Cache {
+    fn create(n: string) *Cache {
+        return new Cache{
+            .items = new List<string>,
+            .name = n,
+            .count = 0,
+        }
+    }
+
+    fn add(self: *Cache, item: string) {
+        self.items.push(item)
+        self.count = self.count + 1
+    }
+
+    fn print(self: *Cache) {
+        println("name: " + self.name)
+        println("count: " + string(self.count))
+        println("items.len: " + string(self.items.len()))
+    }
+}
+
+fn main() i64 {
+    var c = Cache.create("test")
+    println("created cache")
+    c.print()
+    c.add("hello")
+    c.add("world")
+    c.print()
+    return 0
+}

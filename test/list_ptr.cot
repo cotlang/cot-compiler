@@ -1,0 +1,31 @@
+// Test List of struct pointers
+
+struct Item {
+    name: string,
+    value: i64,
+}
+
+struct Container {
+    items: List<*Item>,
+    label: string,
+}
+
+impl Container {
+    fn create(lbl: string) *Container {
+        return new Container{
+            .items = new List<*Item>,
+            .label = lbl,
+        }
+    }
+
+    fn info(self: *Container) {
+        println("label: " + self.label)
+        println("items.len: " + string(self.items.len()))
+    }
+}
+
+fn main() i64 {
+    var c = Container.create("test")
+    c.info()
+    return 0
+}

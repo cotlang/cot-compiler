@@ -1,0 +1,42 @@
+// Test method call chain like ModuleCache
+
+struct Cache {
+    data: List<string>,
+    name: string,
+}
+
+impl Cache {
+    fn create(n: string) *Cache {
+        return new Cache{
+            .data = new List<string>,
+            .name = n,
+        }
+    }
+
+    fn methodA(self: *Cache, arg: string) bool {
+        println("[methodA] arg: " + arg)
+        println("[methodA] name: " + self.name)
+        return self.methodB(arg)
+    }
+
+    fn methodB(self: *Cache, arg: string) bool {
+        println("[methodB] arg: " + arg)
+        println("[methodB] name: " + self.name)
+        return self.methodC(arg)
+    }
+
+    fn methodC(self: *Cache, arg: string) bool {
+        println("[methodC] arg: " + arg)
+        println("[methodC] name: " + self.name)
+        println("[methodC] data.len: " + string(self.data.len()))
+        return true
+    }
+}
+
+fn main() i64 {
+    var c = Cache.create("test")
+    println("created, calling methodA")
+    var result = c.methodA("hello")
+    println("result: " + string(result))
+    return 0
+}

@@ -1,0 +1,27 @@
+// Test struct with one List field
+
+struct WithList {
+    name: string,
+    items: List<string>,
+}
+
+impl WithList {
+    fn create(n: string) *WithList {
+        return new WithList{
+            .name = n,
+            .items = new List<string>,
+        }
+    }
+
+    fn print(self: *WithList) {
+        println("name: " + self.name)
+        println("items.len: " + string(self.items.len()))
+    }
+}
+
+fn main() i64 {
+    var w = WithList.create("test")
+    println("created")
+    w.print()
+    return 0
+}

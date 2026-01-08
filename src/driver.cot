@@ -4,12 +4,11 @@
 //
 // This driver orchestrates the compilation pipeline:
 // 1. Parse command-line arguments
-// 2. Read source file
-// 3. Lexer -> Parser -> AST
-// 4. Type checking
-// 5. AST -> IR lowering
-// 6. IR -> Bytecode emission
-// 7. Write bytecode to output file
+// 2. Load source file and all imports (multi-file support)
+// 3. Type checking
+// 4. AST -> IR lowering
+// 5. IR -> Bytecode emission
+// 6. Write bytecode to output file
 
 import "token"
 import "lexer"
@@ -20,6 +19,7 @@ import "type_checker"
 import "ir"
 import "lower"
 import "emit"
+import "module"
 
 fn main() i64 {
     println("[driver] Starting main...")
@@ -53,37 +53,64 @@ fn main() i64 {
     println("[driver] Output: " + output_file)
     println("[driver]")
 
-    // Phase 1: Read source file
-    println("[driver] Reading source file...")
-    var source = read_file(source_file)
-    if (len(source) == 0) {
-        println("[driver] Error: Could not read file: " + source_file)
-        return 1
-    }
-    println("[driver]   Read " + string(len(source)) + " bytes")
+    // Phase 1: Load all modules (parse source and imports)
+    println("[driver] === Phase 1: Loading Modules ===")
 
-    // Phase 2: Parse
-    println("[driver]")
-    println("[driver] === Phase 1: Parsing ===")
-    var parser = Parser.create(source)
-    var mod = parser.parseModule()
+    // Get base directory from source file path
+    println("[driver] about to call dirname...")
+    var base_dir = dirname(source_file)
+    println("[driver] base_dir: " + base_dir)
+    println("[driver] about to create cache...")
+    var cache = ModuleCache.create(base_dir)
+    println("[driver] cache created")
 
-    if (mod.has_errors) {
-        println("[driver] Parse errors:")
+    // Get just the module name (without path and extension)
+    println("[driver] about to call getModuleName...")
+    var module_name = getModuleName(source_file)
+    println("[driver] module_name: " + module_name)
+
+    // Load root module and all dependencies
+    if (!cache.loadWithDeps(module_name)) {
+        println("[driver] Error loading modules:")
         var i: i64 = 0
-        while (i < mod.errors.len()) {
-            println("[driver]   " + mod.errors.get(i))
+        while (i < cache.errors.len()) {
+            println("[driver]   " + cache.errors.get(i))
             i += 1
         }
         return 1
     }
 
-    println("[driver]   Parsed " + string(mod.statements.len()) + " top-level statements")
+    println("[driver]   Loaded " + string(cache.count()) + " module(s)")
 
-    // Phase 3: Type Check
+    // Get compile order (dependencies first)
+    var order = cache.getCompileOrder()
+
+    if (cache.errors.len() > 0) {
+        println("[driver] Import errors:")
+        var i: i64 = 0
+        while (i < cache.errors.len()) {
+            println("[driver]   " + cache.errors.get(i))
+            i += 1
+        }
+        return 1
+    }
+
+    // Collect all statements from all modules (in dependency order)
+    var all_stmts = new List<*Stmt>
+    var mod_idx: i64 = 0
+    while (mod_idx < order.len()) {
+        var path = order.get(mod_idx)
+        // Get module and collect its non-import statements
+        collectModuleStatements(cache, path, all_stmts)
+        mod_idx += 1
+    }
+
+    println("[driver]   Collected " + string(all_stmts.len()) + " statements")
+
+    // Phase 2: Type Check
     println("[driver]")
     println("[driver] === Phase 2: Type Checking ===")
-    var stmts = mod.statements.to_slice()
+    var stmts = all_stmts.to_slice()
     var tc = typeCheck(stmts)
 
     if (tc.had_error) {
@@ -98,7 +125,7 @@ fn main() i64 {
 
     println("  Type check passed")
 
-    // Phase 4: Lower to IR
+    // Phase 3: Lower to IR
     println("")
     println("=== Phase 3: Lowering to IR ===")
     var lowerer = newLowerer(tc.reg)
@@ -116,14 +143,10 @@ fn main() i64 {
 
     println("  Lowered " + string(lowerer.module.functions.len()) + " functions")
 
-    // Phase 5: Emit bytecode
+    // Phase 4: Emit bytecode
     println("")
     println("=== Phase 4: Emitting Bytecode ===")
     var emitter = newBytecodeEmitter()
-
-    // TODO: Translate IR module to bytecode
-    // This requires implementing the IR -> BytecodeEmitter bridge
-    // For now, emit a minimal module
 
     // Find main function for entry point
     var entry_point: i64 = -1
@@ -144,7 +167,7 @@ fn main() i64 {
     var bytecode = emitBuildModule(emitter, entry_point, 0)
     println("  Generated " + string(bytecode.len()) + " bytes of bytecode")
 
-    // Phase 6: Write output
+    // Phase 5: Write output
     println("")
     println("=== Phase 5: Writing Output ===")
     var success = write_bytes(output_file, bytecode)
@@ -189,4 +212,46 @@ fn getOutputPathFrom(source_file: string, args: List<string>, start_idx: i64) st
     }
 
     return source_file + ".cbo"
+}
+
+// Collect statements from a module, skipping import statements
+fn collectModuleStatements(cache: *ModuleCache, path: string, stmts: *List<*Stmt>) {
+    var idx = cache.getIndex(path)
+    if (idx < 0) {
+        return
+    }
+    var mod = cache.modules.get(idx)
+    var stmt_idx: i64 = 0
+    while (stmt_idx < mod.statements.len()) {
+        var stmt = mod.statements.get(stmt_idx)
+        if (stmt.kind != StmtKind.ImportStmt) {
+            stmts.push(stmt)
+        }
+        stmt_idx += 1
+    }
+}
+
+// Get the module name from a file path (strip directory and .cot extension)
+fn getModuleName(path: string) string {
+    // Find last slash
+    var start: i64 = 0
+    var i: i64 = 0
+    while (i < len(path)) {
+        var ch = path[i..i + 1]
+        if (ch == "/") {
+            start = i + 1
+        }
+        i += 1
+    }
+
+    // Find .cot extension
+    var end_pos = len(path)
+    if (len(path) > 4) {
+        var ext = path[len(path) - 4..len(path)]
+        if (ext == ".cot") {
+            end_pos = len(path) - 4
+        }
+    }
+
+    return path[start..end_pos]
 }

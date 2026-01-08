@@ -1,0 +1,29 @@
+// Simple struct field access test
+
+struct TestStruct {
+    a: i64,
+    b: string,
+    c: i64,
+}
+
+impl TestStruct {
+    fn create(val: i64, name: string) *TestStruct {
+        return new TestStruct{
+            .a = val,
+            .b = name,
+            .c = val * 2,
+        }
+    }
+
+    fn printFields(self: *TestStruct) {
+        println("a = " + string(self.a))
+        println("b = " + self.b)
+        println("c = " + string(self.c))
+    }
+}
+
+fn main() i64 {
+    var t = TestStruct.create(42, "hello")
+    t.printFields()
+    return 0
+}

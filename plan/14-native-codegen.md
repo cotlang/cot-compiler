@@ -175,7 +175,7 @@ cot-rs/src/native_gen/
 
 **Purpose:** Allow Cot code to invoke the native compiler, enabling self-hosting.
 
-### Milestone 3.1: C Library Wrapper
+### Milestone 3.1: C Library Wrapper ✅ COMPLETE
 
 **MVP:** Native compiler exposed as C-callable library.
 
@@ -192,8 +192,9 @@ void cot_free_module(CotModule* module);
 void cot_free_native(CotNativeCode* code);
 ```
 
-- [ ] Create `cot-rs` cdylib target
-- [ ] Implement C API functions
+- [x] Create `cot-rs` cdylib target (Cargo.toml crate-type)
+- [x] Implement C API functions (src/ffi.rs)
+- [x] C header file (include/cot_codegen.h)
 - [ ] Test from C program
 
 ### Milestone 3.2: Cot FFI Bindings
@@ -408,8 +409,11 @@ diff test1.cbo test2.cbo  # Should be identical
 | 1.5 Functions | ✅ Complete | multi-function works |
 | 1.6 Strings/IO | ✅ Complete | println works |
 | 1.7 Heap/Records | ✅ Complete | structs work |
-| 2.x Cranelift | 🔲 Not started | optimized output |
-| 3.x FFI Bridge | 🔲 Not started | Cot calls native compiler |
+| 2.1 Cranelift Setup | ✅ Complete | basic IR translation |
+| 2.2 Cranelift Ops | 🔄 In Progress | arithmetic/logic/flow |
+| 2.3 Full Cranelift | 🔲 Not started | all ~150 opcodes |
+| 3.1 C Library | ✅ Complete | libcot_rs.dylib ready |
+| 3.2 Cot FFI | 🔲 Not started | Cot calls native compiler |
 | 4.x Self-Host | 🔲 Not started | bootstrap works |
 | 5.x Runtime | 🔲 Not started | no VM needed |
 | 6.x Full Self-Host | 🔲 Not started | Go-level independence |

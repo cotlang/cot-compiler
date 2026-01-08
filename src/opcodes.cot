@@ -89,6 +89,14 @@ enum Opcode {
     CallDynamic,
     Ret,
     RetVal,
+    PushArg,
+    PushArgReg,
+    PopArg,
+
+    // Stack Pointer Operations
+    GetLocalPtr,
+    LoadIndirect,
+    StoreIndirect,
 
     // Record/Field Operations
     NewRecord,
@@ -227,6 +235,12 @@ fn opcodeValue(op: Opcode) i64 {
         Opcode.CallDynamic => { return 116 }
         Opcode.Ret => { return 117 }
         Opcode.RetVal => { return 118 }
+        Opcode.PushArg => { return 119 }
+        Opcode.PushArgReg => { return 120 }
+        Opcode.PopArg => { return 121 }
+        Opcode.GetLocalPtr => { return 122 }
+        Opcode.LoadIndirect => { return 123 }
+        Opcode.StoreIndirect => { return 124 }
         Opcode.NewRecord => { return 128 }
         Opcode.FreeRecord => { return 129 }
         Opcode.LoadField => { return 130 }
@@ -352,6 +366,12 @@ fn operandSize(op: Opcode) i64 {
         Opcode.Log => { return 2 }
         Opcode.CallIndirect => { return 2 }
         Opcode.Assert => { return 2 }
+        Opcode.PushArg => { return 3 }
+        Opcode.PushArgReg => { return 2 }
+        Opcode.PopArg => { return 3 }
+        Opcode.GetLocalPtr => { return 3 }
+        Opcode.LoadIndirect => { return 3 }
+        Opcode.StoreIndirect => { return 3 }
         Opcode.MapNew => { return 2 }
         Opcode.MapSet => { return 2 }
         Opcode.MapGet => { return 2 }
@@ -445,6 +465,12 @@ fn opcodeName(op: Opcode) string {
         Opcode.Call => { return "call" }
         Opcode.Ret => { return "ret" }
         Opcode.RetVal => { return "ret_val" }
+        Opcode.PushArg => { return "push_arg" }
+        Opcode.PushArgReg => { return "push_arg_reg" }
+        Opcode.PopArg => { return "pop_arg" }
+        Opcode.GetLocalPtr => { return "get_local_ptr" }
+        Opcode.LoadIndirect => { return "load_indirect" }
+        Opcode.StoreIndirect => { return "store_indirect" }
         Opcode.Print => { return "print" }
         Opcode.Println => { return "println" }
         Opcode.DebugLine => { return "debug_line" }

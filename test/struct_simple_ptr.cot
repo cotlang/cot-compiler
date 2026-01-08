@@ -1,0 +1,27 @@
+// Test struct pointer without List fields
+
+struct Simple {
+    name: string,
+    value: i64,
+}
+
+impl Simple {
+    fn create(n: string, v: i64) *Simple {
+        return new Simple{
+            .name = n,
+            .value = v,
+        }
+    }
+
+    fn print(self: *Simple) {
+        println("name: " + self.name)
+        println("value: " + string(self.value))
+    }
+}
+
+fn main() i64 {
+    var s = Simple.create("test", 42)
+    println("created")
+    s.print()
+    return 0
+}

@@ -1,0 +1,34 @@
+// Test struct with 4 fields like ModuleCache
+
+struct FourFields {
+    list1: List<string>,
+    list2: List<string>,
+    name: string,
+    list3: List<string>,
+}
+
+impl FourFields {
+    fn create(n: string) *FourFields {
+        return new FourFields{
+            .list1 = new List<string>,
+            .list2 = new List<string>,
+            .name = n,
+            .list3 = new List<string>,
+        }
+    }
+
+    fn check(self: *FourFields, arg: string) {
+        println("arg: " + arg)
+        println("name: " + self.name)
+        println("list1.len: " + string(self.list1.len()))
+        println("list2.len: " + string(self.list2.len()))
+        println("list3.len: " + string(self.list3.len()))
+    }
+}
+
+fn main() i64 {
+    var f = FourFields.create("hello")
+    println("created")
+    f.check("world")
+    return 0
+}
