@@ -71,7 +71,8 @@ impl Lexer {
 
     // Peek at next character (one ahead)
     fn peekNext(self: *Lexer) string {
-        if (self.current + 1 >= len(self.source)) {
+        var src_len = len(self.source)
+        if (self.current + 1 >= src_len) {
             return ""
         }
         return self.source[self.current + 1..self.current + 2]
@@ -92,17 +93,36 @@ impl Lexer {
 
     // Skip whitespace and comments
     fn skipWhitespace(self: *Lexer) {
+        println("[skipWS] start current=" + string(self.current) + " srclen=" + string(len(self.source)))
+        var loopCount: i64 = 0
         while (!self.isAtEnd()) {
+            loopCount = loopCount + 1
+            if (loopCount > 200) {
+                println("[skipWS] TOO MANY ITERATIONS! current=" + string(self.current))
+                return
+            }
             var ch: string = self.peek()
+            print("[skipWS] loop ")
+            print(string(loopCount))
+            print(" ch=")
+            println(string(ch[0] as i64))
 
             // Whitespace characters
+            println("[skipWS] checking whitespace")
             if (ch == " " or ch == "\t" or ch == "\r" or ch == "\n") {
+                println("[skipWS] is whitespace, advancing")
                 self.advance()
                 continue
             }
+            println("[skipWS] not whitespace")
 
             // Comments
-            if (ch == "/") {
+            println("[skipWS] checking comments ch_len=" + string(len(ch)))
+            var slash: string = "/"
+            println("[skipWS] slash created len=" + string(len(slash)))
+            var is_slash: bool = ch == slash
+            println("[skipWS] is_slash=" + string(is_slash as i64))
+            if (is_slash) {
                 if (self.peekNext() == "/") {
                     // Line comment - skip to end of line
                     while (!self.isAtEnd() and self.peek() != "\n") {
@@ -124,6 +144,7 @@ impl Lexer {
                     continue
                 }
             }
+            println("[skipWS] about to return")
 
             // Not whitespace or comment - stop
             return
@@ -225,9 +246,18 @@ impl Lexer {
 
     // Scan an identifier or keyword
     fn scanIdentifier(self: *Lexer) Token {
+        println("[scanIdent] start current=" + string(self.current))
+        var idLoop: i64 = 0
         while (!self.isAtEnd() and isAlphaNumeric(self.peek())) {
+            idLoop = idLoop + 1
+            println("[scanIdent] loop " + string(idLoop) + " current=" + string(self.current))
+            if (idLoop > 100) {
+                println("[scanIdent] TOO MANY!")
+                break
+            }
             self.advance()
         }
+        println("[scanIdent] done, current=" + string(self.current))
 
         var text: string = self.currentLexeme()
         var token_type: TokenType = identifierType(text)
@@ -397,17 +427,23 @@ impl Lexer {
         }
 
         self.skipWhitespace()
+        println("[scanToken] after skipWhitespace, current=" + string(self.current))
         self.start = self.current
+        println("[scanToken] after start assign")
         self.start_column = self.column
-
+        println("[scanToken] after start_column assign")
         if (self.isAtEnd()) {
+            println("[scanToken] at end, returning EOF")
             return self.makeToken(TokenType.Eof)
         }
+        println("[scanToken] not at end, advancing")
 
         var ch: string = self.advance()
+        println("[scanToken] got ch code=" + string(ch[0] as i64))
 
         // Identifiers and keywords
         if (isAlpha(ch)) {
+            println("[scanToken] isAlpha, scanning identifier")
             return self.scanIdentifier()
         }
 

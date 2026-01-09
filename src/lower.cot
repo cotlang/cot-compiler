@@ -1976,6 +1976,18 @@ fn lowerForRangeStmt(l: Lowerer, stmt: Stmt) {
     inst.op2_id = start_id
     lowerEmit(l, inst)
 
+    // Phi elimination pattern: create dedicated alloca for end bound
+    // Store at entry (predecessor end), load in cond (successor start)
+    const end_var_id = lowerNewValue(l)
+    inst = newIRInst(IROp.Alloca)
+    inst.result_id = end_var_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = end_var_id
+    inst.op2_id = end_id
+    lowerEmit(l, inst)
+
     inst = newIRInst(IROp.Jump)
     inst.target_block = cond_block
     lowerEmit(l, inst)
@@ -1988,11 +2000,18 @@ fn lowerForRangeStmt(l: Lowerer, stmt: Stmt) {
     inst.op1_id = var_id
     lowerEmit(l, inst)
 
+    // Load end from dedicated alloca (phi elimination)
+    const end_loaded = lowerNewValue(l)
+    inst = newIRInst(IROp.Load)
+    inst.result_id = end_loaded
+    inst.op1_id = end_var_id
+    lowerEmit(l, inst)
+
     const cmp_id = lowerNewValue(l)
     inst = newIRInst(IROp.ICmp)
     inst.result_id = cmp_id
     inst.op1_id = cur_val
-    inst.op2_id = end_id
+    inst.op2_id = end_loaded
     // Use Sle for inclusive range (..=), Slt for exclusive range (..)
     if (range.range_inclusive) {
         inst.cond = CondCode.Sle
@@ -2066,9 +2085,21 @@ fn lowerForListStmt(l: Lowerer, stmt: Stmt) {
         iter_id = lowerExpr(l, stmt.for_iter.*)
     }
 
+    // Phi elimination pattern: create dedicated alloca for iterator reference
+    // This prevents the iterator from being clobbered across loop iterations
+    const iter_var_id = lowerNewValue(l)
+    var inst = newIRInst(IROp.Alloca)
+    inst.result_id = iter_var_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = iter_var_id
+    inst.op2_id = iter_id
+    lowerEmit(l, inst)
+
     // Allocate index, init to 0
     const idx_id = lowerNewValue(l)
-    var inst = newIRInst(IROp.Alloca)
+    inst = newIRInst(IROp.Alloca)
     inst.result_id = idx_id
     lowerEmit(l, inst)
 
@@ -2089,11 +2120,11 @@ fn lowerForListStmt(l: Lowerer, stmt: Stmt) {
 
     // Condition: idx < len(iter)
     lowerSwitchBlock(l, cond_block)
-    lowerForCondition(l, idx_id, iter_id, body_block, exit_block, stmt.loc.line)
+    lowerForConditionWithIterVar(l, idx_id, iter_var_id, body_block, exit_block, stmt.loc.line)
 
     // Body
     lowerSwitchBlock(l, body_block)
-    lowerForBody(l, stmt, idx_id, iter_id, cond_block, exit_block)
+    lowerForBodyWithIterVar(l, stmt, idx_id, iter_var_id, cond_block, exit_block)
 
     // Exit
     lowerSwitchBlock(l, exit_block)
@@ -2197,6 +2228,92 @@ fn lowerForIncrement(l: Lowerer, idx_id: i64, cond_block: i64) {
     inst = newIRInst(IROp.Jump)
     inst.target_block = cond_block
     lowerEmit(l, inst)
+}
+
+// Phi elimination version: load iterator from alloca
+fn lowerForConditionWithIterVar(l: Lowerer, idx_id: i64, iter_var_id: i64, body_block: i64, exit_block: i64, line: i64) {
+    const cur_idx = lowerNewValue(l)
+    var inst = newIRInst(IROp.Load)
+    inst.result_id = cur_idx
+    inst.op1_id = idx_id
+    lowerEmit(l, inst)
+
+    // Load iterator from dedicated alloca (phi elimination)
+    const iter_loaded = lowerNewValue(l)
+    inst = newIRInst(IROp.Load)
+    inst.result_id = iter_loaded
+    inst.op1_id = iter_var_id
+    lowerEmit(l, inst)
+
+    const len_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ListLen)
+    inst.result_id = len_id
+    inst.op1_id = iter_loaded
+    lowerEmit(l, inst)
+
+    const cmp_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ICmp)
+    inst.result_id = cmp_id
+    inst.op1_id = cur_idx
+    inst.op2_id = len_id
+    inst.cond = CondCode.Slt
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.BrIf)
+    inst.op1_id = cmp_id
+    inst.target_block = body_block
+    inst.else_block = exit_block
+    lowerEmit(l, inst)
+}
+
+// Phi elimination version: load iterator from alloca
+fn lowerForBodyWithIterVar(l: Lowerer, stmt: Stmt, idx_id: i64, iter_var_id: i64, cond_block: i64, exit_block: i64) {
+    lowerEnterLoopScope(l, exit_block, cond_block)
+
+    // Load current index for element access
+    const cur_idx = lowerNewValue(l)
+    var inst = newIRInst(IROp.Load)
+    inst.result_id = cur_idx
+    inst.op1_id = idx_id
+    lowerEmit(l, inst)
+
+    // Load iterator from dedicated alloca (phi elimination)
+    const iter_loaded = lowerNewValue(l)
+    inst = newIRInst(IROp.Load)
+    inst.result_id = iter_loaded
+    inst.op1_id = iter_var_id
+    lowerEmit(l, inst)
+
+    // Get element
+    const elem_id = lowerNewValue(l)
+    inst = newIRInst(IROp.ListGet)
+    inst.result_id = elem_id
+    inst.op1_id = iter_loaded
+    inst.op2_id = cur_idx
+    lowerEmit(l, inst)
+
+    // Alloc and store loop var
+    const var_id = lowerNewValue(l)
+    inst = newIRInst(IROp.Alloca)
+    inst.result_id = var_id
+    lowerEmit(l, inst)
+
+    inst = newIRInst(IROp.Store)
+    inst.op1_id = var_id
+    inst.op2_id = elem_id
+    lowerEmit(l, inst)
+
+    lowerDefineVar(l, stmt.for_var, var_id)
+
+    // Lower body
+    if (stmt.for_body != null) {
+        lowerStmt(l, stmt.for_body.*)
+    }
+
+    lowerExitScope(l)
+
+    // Increment and jump back
+    lowerForIncrement(l, idx_id, cond_block)
 }
 
 fn lowerSwitchStmt(l: Lowerer, stmt: Stmt) {

@@ -1,0 +1,7 @@
+import "module"
+
+fn main() {
+    println("Testing module functions")
+    var base_dir = dirname("/tmp/hello.cot")
+    println("dirname: " + base_dir)
+}

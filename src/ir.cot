@@ -252,6 +252,10 @@ enum IROp {
 
     // Closure operations
     MakeClosure,       // Create closure from function name and environment map
+
+    // SSA phi node - value merging at control flow join points
+    // Used for proper handling of loop variables in SSA form
+    Phi,
 }
 
 impl IROp {

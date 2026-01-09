@@ -20,9 +20,12 @@ import "ir"
 import "lower"
 import "emit"
 import "module"
+import "opcodes"
+import "asm_arm64"
+import "emit_native"
+import "object_macho"
 
 fn main() i64 {
-    println("[driver] Starting main...")
     // Get command-line arguments
     var args = process_args()
 
@@ -45,51 +48,44 @@ fn main() i64 {
     // Get source file (next arg after "compile")
     var source_file = args.get(compile_idx + 1)
 
-    // Get output file (check remaining args for -o flag)
-    var output_file = getOutputPathFrom(source_file, args, compile_idx + 2)
+    // Check for --native flag
+    var use_native = hasFlag(args, "--native")
 
-    println("[driver] === Cot Self-Hosted Compiler ===")
-    println("[driver] Source: " + source_file)
-    println("[driver] Output: " + output_file)
-    println("[driver]")
+    // Get output file (check remaining args for -o flag)
+    var output_file = getOutputPathFrom(source_file, args, compile_idx + 2, use_native)
 
     // Phase 1: Load all modules (parse source and imports)
-    println("[driver] === Phase 1: Loading Modules ===")
-
-    // Get base directory from source file path
-    println("[driver] about to call dirname...")
     var base_dir = dirname(source_file)
-    println("[driver] base_dir: " + base_dir)
-    println("[driver] about to create cache...")
     var cache = ModuleCache.create(base_dir)
-    println("[driver] cache created")
-
-    // Get just the module name (without path and extension)
-    println("[driver] about to call getModuleName...")
     var module_name = getModuleName(source_file)
-    println("[driver] module_name: " + module_name)
 
     // Load root module and all dependencies
+    println("DEBUG: Loading module: " + module_name + " from base_dir: " + base_dir)
     if (!cache.loadWithDeps(module_name)) {
-        println("[driver] Error loading modules:")
+        println("Error loading modules:")
         var i: i64 = 0
         while (i < cache.errors.len()) {
-            println("[driver]   " + cache.errors.get(i))
+            println("  " + cache.errors.get(i))
             i += 1
         }
         return 1
     }
 
-    println("[driver]   Loaded " + string(cache.count()) + " module(s)")
-
     // Get compile order (dependencies first)
     var order = cache.getCompileOrder()
 
+    println("DEBUG: Compile order (" + string(order.len()) + " modules):")
+    var debug_i: i64 = 0
+    while (debug_i < order.len()) {
+        println("  " + string(debug_i) + ": " + order.get(debug_i))
+        debug_i += 1
+    }
+
     if (cache.errors.len() > 0) {
-        println("[driver] Import errors:")
+        println("Import errors:")
         var i: i64 = 0
         while (i < cache.errors.len()) {
-            println("[driver]   " + cache.errors.get(i))
+            println("  " + cache.errors.get(i))
             i += 1
         }
         return 1
@@ -105,11 +101,7 @@ fn main() i64 {
         mod_idx += 1
     }
 
-    println("[driver]   Collected " + string(all_stmts.len()) + " statements")
-
     // Phase 2: Type Check
-    println("[driver]")
-    println("[driver] === Phase 2: Type Checking ===")
     var stmts = all_stmts.to_slice()
     var tc = typeCheck(stmts)
 
@@ -123,11 +115,7 @@ fn main() i64 {
         return 1
     }
 
-    println("  Type check passed")
-
     // Phase 3: Lower to IR
-    println("")
-    println("=== Phase 3: Lowering to IR ===")
     var lowerer = newLowerer(tc.reg)
     lowerModule(lowerer, stmts)
 
@@ -141,11 +129,7 @@ fn main() i64 {
         return 1
     }
 
-    println("  Lowered " + string(lowerer.module.functions.len()) + " functions")
-
     // Phase 4: Emit bytecode
-    println("")
-    println("=== Phase 4: Emitting Bytecode ===")
     var emitter = newBytecodeEmitter()
 
     // Find main function for entry point
@@ -159,41 +143,110 @@ fn main() i64 {
         fn_idx += 1
     }
 
-    if (entry_point < 0) {
-        println("Warning: No main() function found")
-    }
-
     // Build the bytecode module
     var bytecode = emitBuildModule(emitter, entry_point, 0)
-    println("  Generated " + string(bytecode.len()) + " bytes of bytecode")
 
-    // Phase 5: Write output
-    println("")
-    println("=== Phase 5: Writing Output ===")
-    var success = write_bytes(output_file, bytecode)
+    // Phase 5: Native compilation (if requested) or write bytecode
+    if (use_native) {
 
-    if (success) {
-        println("  Wrote " + output_file)
-        println("")
-        println("Compilation successful!")
-        return 0
+        // Create native compiler and feed it bytecode
+        var nc = NativeCompiler.init()
+
+        // Transfer bytecode to native compiler
+        var bc_idx: i64 = 0
+        while (bc_idx < bytecode.len()) {
+            nc.addBytecode(bytecode.get(bc_idx))
+            bc_idx += 1
+        }
+
+        // Add routine info (main at entry_point)
+        // For now, treat entire bytecode as one routine
+        nc.addRoutine("_main", 0, bytecode.len(), 16)
+
+        // Compile to native
+        nc.compile()
+
+        // Get native code
+        var native_code = nc.getCode()
+
+        // Build Mach-O object file
+        var macho = MachOBuilder.create()
+
+        // Set text section with code
+        macho.setTextCode(native_code)
+
+        // Add _main symbol (section 1 = __text, offset 0, external)
+        macho.addSymbol("_main", 1, 0, true)
+
+        // Build object file
+        var object_data = macho.build()
+
+        // Write output
+        var success = write_bytes(output_file, object_data)
+
+        if (success) {
+            println("Wrote " + output_file)
+            return 0
+        } else {
+            println("Error: Failed to write " + output_file)
+            return 1
+        }
     } else {
-        println("Error: Failed to write " + output_file)
-        return 1
+        // Write bytecode output
+        var success = write_bytes(output_file, bytecode)
+
+        if (success) {
+            println("Wrote " + output_file)
+            return 0
+        } else {
+            println("Error: Failed to write " + output_file)
+            return 1
+        }
     }
 }
 
 fn printUsage() {
-    println("Usage: cot-compiler compile <source.cot> [-o <output.cbo>]")
+    println("Usage: cot-compiler compile <source.cot> [-o <output>] [--native]")
     println("")
     println("Commands:")
-    println("  compile    Compile source file to bytecode")
+    println("  compile    Compile source file")
     println("")
     println("Options:")
-    println("  -o <file>  Output file (default: <source>.cbo)")
+    println("  -o <file>  Output file (default: <source>.cbo or .o)")
+    println("  --native   Generate native ARM64 code instead of bytecode")
 }
 
-fn getOutputPathFrom(source_file: string, args: List<string>, start_idx: i64) string {
+// Check if a flag exists in args
+fn hasFlag(args: List<string>, flag: string) bool {
+    var i: i64 = 0
+    while (i < args.len()) {
+        if (args.get(i) == flag) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+// Get base name (strip extension from output file)
+fn getBaseName(path: string) string {
+    // Find last dot
+    var dot_pos: i64 = -1
+    var i: i64 = 0
+    while (i < len(path)) {
+        var ch = path[i..i + 1]
+        if (ch == ".") {
+            dot_pos = i
+        }
+        i += 1
+    }
+    if (dot_pos > 0) {
+        return path[0..dot_pos]
+    }
+    return path
+}
+
+fn getOutputPathFrom(source_file: string, args: List<string>, start_idx: i64, use_native: bool) string {
     // Check for -o flag starting from start_idx
     var i: i64 = start_idx
     while (i < args.len()) {
@@ -203,15 +256,21 @@ fn getOutputPathFrom(source_file: string, args: List<string>, start_idx: i64) st
         i += 1
     }
 
-    // Default: replace .cot with .cbo
+    // Default extension depends on mode
+    var default_ext = ".cbo"
+    if (use_native) {
+        default_ext = ".o"
+    }
+
+    // Default: replace .cot with appropriate extension
     if (len(source_file) > 4) {
         var ext = source_file[len(source_file) - 4..len(source_file)]
         if (ext == ".cot") {
-            return source_file[0..len(source_file) - 4] + ".cbo"
+            return source_file[0..len(source_file) - 4] + default_ext
         }
     }
 
-    return source_file + ".cbo"
+    return source_file + default_ext
 }
 
 // Collect statements from a module, skipping import statements

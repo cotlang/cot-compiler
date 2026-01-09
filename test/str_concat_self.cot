@@ -1,0 +1,30 @@
+// Test string concatenation with self access
+
+struct Builder {
+    prefix: string,
+}
+
+impl Builder {
+    fn create(p: string) *Builder {
+        return new Builder{ .prefix = p }
+    }
+
+    fn build(self: *Builder, suffix: string) string {
+        // Access self first
+        var pre = self.prefix
+        println("[build] pre: " + pre)
+
+        // Now do concat with local variables only
+        var slash = "/"
+        var result = pre + slash + suffix
+        println("[build] result: " + result)
+        return result
+    }
+}
+
+fn main() i64 {
+    var b = Builder.create("hello")
+    var r = b.build("world")
+    println("final: " + r)
+    return 0
+}

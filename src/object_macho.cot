@@ -1,0 +1,633 @@
+// Mach-O Object File Builder for Cot
+//
+// Generates Mach-O object files (.o) for macOS/ARM64.
+// This is Phase 3 of the native code generator.
+//
+// Mach-O format (simplified for object files):
+//   - Mach-O Header (32 bytes)
+//   - Load Commands (LC_SEGMENT_64, LC_SYMTAB, etc.)
+//   - Segment data (sections with code/data)
+//   - Symbol table
+//   - String table
+
+// =============================================================================
+// Mach-O Constants
+// =============================================================================
+
+// Magic numbers
+fn MH_MAGIC_64() i64 { return 0xFEEDFACF }
+
+// CPU types
+fn CPU_TYPE_ARM64() i64 { return 0x0100000C }  // CPU_TYPE_ARM | CPU_ARCH_ABI64
+fn CPU_SUBTYPE_ARM64_ALL() i64 { return 0 }
+
+// File types
+fn MH_OBJECT() i64 { return 1 }   // Relocatable object file
+
+// Load command types
+fn LC_SEGMENT_64() i64 { return 0x19 }
+fn LC_SYMTAB() i64 { return 0x02 }
+fn LC_DYSYMTAB() i64 { return 0x0B }
+fn LC_BUILD_VERSION() i64 { return 0x32 }
+
+// Section types and attributes
+fn S_REGULAR() i64 { return 0 }
+fn S_ATTR_PURE_INSTRUCTIONS() i64 { return 0x80000000 }
+fn S_ATTR_SOME_INSTRUCTIONS() i64 { return 0x00000400 }
+
+// Symbol types
+fn N_EXT() i64 { return 0x01 }   // External symbol
+fn N_SECT() i64 { return 0x0E }  // Defined in section
+
+// Relocation types for ARM64
+fn ARM64_RELOC_BRANCH26() i64 { return 2 }
+fn ARM64_RELOC_PAGE21() i64 { return 3 }
+fn ARM64_RELOC_PAGEOFF12() i64 { return 4 }
+
+// =============================================================================
+// Symbol Entry
+// =============================================================================
+
+struct SymbolEntry {
+    name: string,
+    section: i64,     // 1-based section index (0 = undefined)
+    offset: i64,      // Offset within section
+    is_external: bool
+}
+
+impl SymbolEntry {
+    fn create(name: string, section: i64, offset: i64, is_external: bool) SymbolEntry {
+        return SymbolEntry{
+            .name = name,
+            .section = section,
+            .offset = offset,
+            .is_external = is_external,
+        }
+    }
+}
+
+// =============================================================================
+// Relocation Entry
+// =============================================================================
+
+struct RelocationEntry {
+    offset: i64,      // Offset in section where relocation applies
+    symbol_idx: i64,  // Index in symbol table
+    reloc_type: i64,  // ARM64_RELOC_* type
+    length: i64,      // 2 = 4 bytes
+    pc_rel: bool,     // PC-relative?
+    is_extern: bool   // External symbol?
+}
+
+impl RelocationEntry {
+    fn create(offset: i64, symbol_idx: i64, reloc_type: i64, pc_rel: bool) RelocationEntry {
+        return RelocationEntry{
+            .offset = offset,
+            .symbol_idx = symbol_idx,
+            .reloc_type = reloc_type,
+            .length = 2,  // 4 bytes
+            .pc_rel = pc_rel,
+            .is_extern = true,
+        }
+    }
+}
+
+// =============================================================================
+// Section Definition
+// =============================================================================
+
+struct SectionDef {
+    name: string,         // Section name (max 16 chars)
+    segment: string,      // Segment name (max 16 chars)
+    data: List<i64>,      // Section content (bytes)
+    align: i64,           // Alignment (power of 2)
+    flags: i64,           // Section flags
+    relocations: List<RelocationEntry>
+}
+
+impl SectionDef {
+    fn createText() SectionDef {
+        return SectionDef{
+            .name = "__text",
+            .segment = "__TEXT",
+            .data = new List<i64>,
+            .align = 4,  // 16-byte alignment
+            .flags = S_ATTR_PURE_INSTRUCTIONS() | S_ATTR_SOME_INSTRUCTIONS(),
+            .relocations = new List<RelocationEntry>,
+        }
+    }
+
+    fn createData() SectionDef {
+        return SectionDef{
+            .name = "__data",
+            .segment = "__DATA",
+            .data = new List<i64>,
+            .align = 3,  // 8-byte alignment
+            .flags = S_REGULAR(),
+            .relocations = new List<RelocationEntry>,
+        }
+    }
+
+    fn createConst() SectionDef {
+        return SectionDef{
+            .name = "__const",
+            .segment = "__DATA",
+            .data = new List<i64>,
+            .align = 3,  // 8-byte alignment
+            .flags = S_REGULAR(),
+            .relocations = new List<RelocationEntry>,
+        }
+    }
+
+    fn size(self: *SectionDef) i64 {
+        return self.data.len()
+    }
+
+    fn appendByte(self: *SectionDef, b: i64) {
+        self.data.push(b & 0xFF)
+    }
+
+    fn appendBytes(self: *SectionDef, bytes: List<i64>) {
+        var i = 0
+        while (i < bytes.len()) {
+            self.data.push(bytes.get(i))
+            i = i + 1
+        }
+    }
+
+    fn addRelocation(self: *SectionDef, rel: RelocationEntry) {
+        self.relocations.push(rel)
+    }
+
+    fn padToAlignment(self: *SectionDef) {
+        var target_align = 1 << self.align
+        while ((self.data.len() % target_align) != 0) {
+            self.data.push(0)
+        }
+    }
+}
+
+// =============================================================================
+// Mach-O Builder
+// =============================================================================
+
+struct MachOBuilder {
+    text_section: SectionDef,
+    data_section: SectionDef,
+    const_section: SectionDef,
+    symbols: List<SymbolEntry>,
+    string_table: List<i64>,  // Bytes of string table
+    string_offsets: List<i64> // Offset for each string
+}
+
+impl MachOBuilder {
+    fn create() MachOBuilder {
+        var builder = MachOBuilder{
+            .text_section = SectionDef.createText(),
+            .data_section = SectionDef.createData(),
+            .const_section = SectionDef.createConst(),
+            .symbols = new List<SymbolEntry>,
+            .string_table = new List<i64>,
+            .string_offsets = new List<i64>,
+        }
+        // String table starts with empty string (null byte)
+        builder.string_table.push(0)
+        return builder
+    }
+
+    fn addString(self: *MachOBuilder, s: string) i64 {
+        var offset = self.string_table.len()
+        self.string_offsets.push(offset)
+
+        // Add string bytes
+        var i = 0
+        while (i < len(s)) {
+            self.string_table.push(s.char_at(i))
+            i = i + 1
+        }
+        // Null terminator
+        self.string_table.push(0)
+
+        return offset
+    }
+
+    fn addSymbol(self: *MachOBuilder, name: string, section: i64, offset: i64, is_external: bool) i64 {
+        var sym_idx = self.symbols.len()
+        self.symbols.push(SymbolEntry.create(name, section, offset, is_external))
+        return sym_idx
+    }
+
+    fn setTextCode(self: *MachOBuilder, code: List<i64>) {
+        self.text_section.data = code
+    }
+
+    fn addTextRelocation(self: *MachOBuilder, rel: RelocationEntry) {
+        self.text_section.addRelocation(rel)
+    }
+
+    // Initialize the globals area in the data section
+    // Returns the symbol index for _cot_globals
+    fn setupGlobals(self: *MachOBuilder, global_count: i64) i64 {
+        if (global_count <= 0) {
+            return -1
+        }
+
+        // Record offset in data section where globals start
+        var globals_offset = self.data_section.size()
+
+        // Reserve space for globals (8 bytes each, initialized to 0)
+        var i = 0
+        while (i < global_count * 8) {
+            self.data_section.appendByte(0)
+            i = i + 1
+        }
+
+        // Add the _cot_globals symbol (section 2 = __data)
+        // Note: section indices are 1-based, __text=1, __data=2
+        var sym_idx = self.addSymbol("_cot_globals", 2, globals_offset, false)
+
+        return sym_idx
+    }
+
+    // Add data to the const section for string constants
+    // Returns the offset where the string was added
+    fn addConstString(self: *MachOBuilder, data: string) i64 {
+        var offset = self.const_section.size()
+
+        // Add string bytes
+        var i = 0
+        while (i < len(data)) {
+            self.const_section.data.push(data.char_at(i))
+            i = i + 1
+        }
+        // Null terminator
+        self.const_section.data.push(0)
+
+        // Align to 8 bytes
+        while ((self.const_section.size() % 8) != 0) {
+            self.const_section.data.push(0)
+        }
+
+        return offset
+    }
+
+    // Add relocations for a global variable access (ADRP + ADD pair)
+    // adrp_offset: offset in text section of ADRP instruction
+    // add_offset: offset in text section of ADD instruction
+    // globals_sym_idx: symbol index for _cot_globals
+    fn addGlobalAccessRelocs(self: *MachOBuilder, adrp_offset: i64, add_offset: i64, globals_sym_idx: i64) {
+        // ADRP relocation (PAGE21)
+        self.text_section.addRelocation(RelocationEntry{
+            .offset = adrp_offset,
+            .symbol_idx = globals_sym_idx,
+            .reloc_type = ARM64_RELOC_PAGE21(),
+            .length = 2,
+            .pc_rel = true,
+            .is_extern = false
+        })
+
+        // ADD relocation (PAGEOFF12)
+        self.text_section.addRelocation(RelocationEntry{
+            .offset = add_offset,
+            .symbol_idx = globals_sym_idx,
+            .reloc_type = ARM64_RELOC_PAGEOFF12(),
+            .length = 2,
+            .pc_rel = false,
+            .is_extern = false
+        })
+    }
+
+    // Add relocations for a constant string access (ADRP + ADD pair)
+    // Similar to global access but points to __const section
+    fn addConstAccessRelocs(self: *MachOBuilder, adrp_offset: i64, add_offset: i64, const_sym_idx: i64) {
+        // ADRP relocation (PAGE21)
+        self.text_section.addRelocation(RelocationEntry{
+            .offset = adrp_offset,
+            .symbol_idx = const_sym_idx,
+            .reloc_type = ARM64_RELOC_PAGE21(),
+            .length = 2,
+            .pc_rel = true,
+            .is_extern = false
+        })
+
+        // ADD relocation (PAGEOFF12)
+        self.text_section.addRelocation(RelocationEntry{
+            .offset = add_offset,
+            .symbol_idx = const_sym_idx,
+            .reloc_type = ARM64_RELOC_PAGEOFF12(),
+            .length = 2,
+            .pc_rel = false,
+            .is_extern = false
+        })
+    }
+
+    // Build the complete Mach-O file
+    fn build(self: *MachOBuilder) List<i64> {
+        var output = new List<i64>
+
+        // Pad sections to alignment
+        self.text_section.padToAlignment()
+        self.data_section.padToAlignment()
+        self.const_section.padToAlignment()
+
+        // Calculate sizes and offsets
+        var header_size = 32  // Mach-O 64-bit header
+
+        // We'll have: LC_SEGMENT_64 with sections + LC_SYMTAB + LC_DYSYMTAB
+        var num_sections = 1  // Just __text for now
+        if (self.data_section.size() > 0) {
+            num_sections = num_sections + 1
+        }
+        if (self.const_section.size() > 0) {
+            num_sections = num_sections + 1
+        }
+
+        // Load command sizes
+        var segment_cmd_size = 72 + (num_sections * 80)  // LC_SEGMENT_64 + sections
+        var symtab_cmd_size = 24
+        var dysymtab_cmd_size = 80
+
+        var load_cmds_size = segment_cmd_size + symtab_cmd_size + dysymtab_cmd_size
+        var num_load_cmds = 3
+
+        // Section data starts after header + load commands
+        var section_offset = header_size + load_cmds_size
+        // Align to 16 bytes
+        section_offset = ((section_offset + 15) / 16) * 16
+
+        // Calculate section offsets
+        var text_offset = section_offset
+        var text_size = self.text_section.size()
+
+        var data_offset = text_offset + text_size
+        var data_size = self.data_section.size()
+
+        var const_offset = data_offset + data_size
+        var const_size = self.const_section.size()
+
+        // Relocations follow section data
+        var reloc_offset = const_offset + const_size
+        var num_text_relocs = self.text_section.relocations.len()
+
+        // Symbol table follows relocations
+        var symtab_offset = reloc_offset + (num_text_relocs * 8)
+        var num_symbols = self.symbols.len()
+
+        // String table follows symbol table
+        var strtab_offset = symtab_offset + (num_symbols * 16)
+        var strtab_size = self.string_table.len()
+
+        // Total segment size (all sections)
+        var segment_size = text_size + data_size + const_size
+
+        // =========== Mach-O Header ===========
+        self.writeU32(output, MH_MAGIC_64())
+        self.writeU32(output, CPU_TYPE_ARM64())
+        self.writeU32(output, CPU_SUBTYPE_ARM64_ALL())
+        self.writeU32(output, MH_OBJECT())
+        self.writeU32(output, num_load_cmds)
+        self.writeU32(output, load_cmds_size)
+        self.writeU32(output, 0)  // flags
+        self.writeU32(output, 0)  // reserved
+
+        // =========== LC_SEGMENT_64 ===========
+        self.writeU32(output, LC_SEGMENT_64())
+        self.writeU32(output, segment_cmd_size)
+        self.writePaddedString(output, "", 16)  // Empty segment name for object files
+        self.writeU64(output, 0)  // vmaddr
+        self.writeU64(output, segment_size)  // vmsize
+        self.writeU64(output, section_offset)  // fileoff
+        self.writeU64(output, segment_size)  // filesize
+        self.writeU32(output, 7)  // maxprot: RWX
+        self.writeU32(output, 7)  // initprot: RWX
+        self.writeU32(output, num_sections)  // nsects
+        self.writeU32(output, 0)  // flags
+
+        // __text section header
+        self.writePaddedString(output, "__text", 16)  // sectname
+        self.writePaddedString(output, "__TEXT", 16)  // segname
+        self.writeU64(output, 0)  // addr
+        self.writeU64(output, text_size)  // size
+        self.writeU32(output, text_offset)  // offset
+        self.writeU32(output, 4)  // align (2^4 = 16)
+        self.writeU32(output, reloc_offset)  // reloff
+        self.writeU32(output, num_text_relocs)  // nreloc
+        self.writeU32(output, self.text_section.flags)  // flags
+        self.writeU32(output, 0)  // reserved1
+        self.writeU32(output, 0)  // reserved2
+        self.writeU32(output, 0)  // reserved3
+
+        // Additional sections if present
+        if (data_size > 0) {
+            self.writePaddedString(output, "__data", 16)
+            self.writePaddedString(output, "__DATA", 16)
+            self.writeU64(output, text_size)  // addr (follows text)
+            self.writeU64(output, data_size)
+            self.writeU32(output, data_offset)
+            self.writeU32(output, 3)  // align (2^3 = 8)
+            self.writeU32(output, 0)  // reloff
+            self.writeU32(output, 0)  // nreloc
+            self.writeU32(output, self.data_section.flags)
+            self.writeU32(output, 0)
+            self.writeU32(output, 0)
+            self.writeU32(output, 0)
+        }
+
+        if (const_size > 0) {
+            self.writePaddedString(output, "__const", 16)
+            self.writePaddedString(output, "__DATA", 16)
+            self.writeU64(output, text_size + data_size)
+            self.writeU64(output, const_size)
+            self.writeU32(output, const_offset)
+            self.writeU32(output, 3)
+            self.writeU32(output, 0)
+            self.writeU32(output, 0)
+            self.writeU32(output, self.const_section.flags)
+            self.writeU32(output, 0)
+            self.writeU32(output, 0)
+            self.writeU32(output, 0)
+        }
+
+        // =========== LC_SYMTAB ===========
+        self.writeU32(output, LC_SYMTAB())
+        self.writeU32(output, symtab_cmd_size)
+        self.writeU32(output, symtab_offset)  // symoff
+        self.writeU32(output, num_symbols)    // nsyms
+        self.writeU32(output, strtab_offset)  // stroff
+        self.writeU32(output, strtab_size)    // strsize
+
+        // =========== LC_DYSYMTAB ===========
+        self.writeU32(output, LC_DYSYMTAB())
+        self.writeU32(output, dysymtab_cmd_size)
+        // Local symbols
+        self.writeU32(output, 0)  // ilocalsym
+        self.writeU32(output, 0)  // nlocalsym
+        // External symbols
+        self.writeU32(output, 0)  // iextdefsym
+        self.writeU32(output, num_symbols)  // nextdefsym
+        // Undefined symbols
+        self.writeU32(output, num_symbols)  // iundefsym
+        self.writeU32(output, 0)  // nundefsym
+        // Table of contents (unused)
+        self.writeU32(output, 0)  // tocoff
+        self.writeU32(output, 0)  // ntoc
+        // Module table (unused)
+        self.writeU32(output, 0)  // modtaboff
+        self.writeU32(output, 0)  // nmodtab
+        // External reference table (unused)
+        self.writeU32(output, 0)  // extrefsymoff
+        self.writeU32(output, 0)  // nextrefsyms
+        // Indirect symbol table
+        self.writeU32(output, 0)  // indirectsymoff
+        self.writeU32(output, 0)  // nindirectsyms
+        // External relocation entries
+        self.writeU32(output, 0)  // extreloff
+        self.writeU32(output, 0)  // nextrel
+        // Local relocation entries
+        self.writeU32(output, 0)  // locreloff
+        self.writeU32(output, 0)  // nlocrel
+
+        // =========== Padding to section offset ===========
+        while (output.len() < section_offset) {
+            output.push(0)
+        }
+
+        // =========== Section Data ===========
+        // __text section
+        var i = 0
+        while (i < text_size) {
+            output.push(self.text_section.data.get(i))
+            i = i + 1
+        }
+
+        // __data section
+        i = 0
+        while (i < data_size) {
+            output.push(self.data_section.data.get(i))
+            i = i + 1
+        }
+
+        // __const section
+        i = 0
+        while (i < const_size) {
+            output.push(self.const_section.data.get(i))
+            i = i + 1
+        }
+
+        // =========== Relocations ===========
+        i = 0
+        while (i < num_text_relocs) {
+            var rel = self.text_section.relocations.get(i)
+            self.writeRelocation(output, rel)
+            i = i + 1
+        }
+
+        // =========== Symbol Table ===========
+        i = 0
+        while (i < num_symbols) {
+            var sym = self.symbols.get(i)
+            self.writeSymbol(output, sym, i)
+            i = i + 1
+        }
+
+        // =========== String Table ===========
+        i = 0
+        while (i < strtab_size) {
+            output.push(self.string_table.get(i))
+            i = i + 1
+        }
+
+        return output
+    }
+
+    // Helper: write 32-bit little-endian value
+    fn writeU32(self: *MachOBuilder, output: List<i64>, val: i64) {
+        output.push(val & 0xFF)
+        output.push((val >> 8) & 0xFF)
+        output.push((val >> 16) & 0xFF)
+        output.push((val >> 24) & 0xFF)
+    }
+
+    // Helper: write 64-bit little-endian value
+    fn writeU64(self: *MachOBuilder, output: List<i64>, val: i64) {
+        self.writeU32(output, val & 0xFFFFFFFF)
+        self.writeU32(output, (val >> 32) & 0xFFFFFFFF)
+    }
+
+    // Helper: write null-padded string
+    fn writePaddedString(self: *MachOBuilder, output: List<i64>, s: string, size: i64) {
+        var i = 0
+        while (i < size) {
+            if (i < len(s)) {
+                output.push(s.char_at(i))
+            } else {
+                output.push(0)
+            }
+            i = i + 1
+        }
+    }
+
+    // Helper: write nlist_64 symbol entry
+    fn writeSymbol(self: *MachOBuilder, output: List<i64>, sym: SymbolEntry, idx: i64) {
+        // Get string table offset for this symbol's name
+        var strx = self.string_offsets.get(idx)
+
+        // n_strx (4 bytes) - string table offset
+        self.writeU32(output, strx)
+
+        // n_type (1 byte)
+        var n_type = N_SECT()  // Symbol defined in section
+        if (sym.is_external) {
+            n_type = n_type | N_EXT()
+        }
+        output.push(n_type)
+
+        // n_sect (1 byte) - 1-based section number
+        output.push(sym.section)
+
+        // n_desc (2 bytes)
+        output.push(0)
+        output.push(0)
+
+        // n_value (8 bytes) - offset within section
+        self.writeU64(output, sym.offset)
+    }
+
+    // Helper: write relocation_info entry
+    fn writeRelocation(self: *MachOBuilder, output: List<i64>, rel: RelocationEntry) {
+        // r_address (4 bytes)
+        self.writeU32(output, rel.offset)
+
+        // r_symbolnum (24 bits) | r_pcrel (1 bit) | r_length (2 bits) |
+        // r_extern (1 bit) | r_type (4 bits)
+        var r_info = rel.symbol_idx & 0xFFFFFF
+        if (rel.pc_rel) {
+            r_info = r_info | (1 << 24)
+        }
+        r_info = r_info | ((rel.length & 0x3) << 25)
+        if (rel.is_extern) {
+            r_info = r_info | (1 << 27)
+        }
+        r_info = r_info | ((rel.reloc_type & 0xF) << 28)
+
+        self.writeU32(output, r_info)
+    }
+}
+
+// =============================================================================
+// Convenience Functions
+// =============================================================================
+
+// Create a simple object file with just a text section
+fn createSimpleObject(code: List<i64>, entry_name: string) List<i64> {
+    var builder = MachOBuilder.create()
+
+    // Add entry symbol to string table and symbol list
+    builder.addString(entry_name)
+    builder.addSymbol(entry_name, 1, 0, true)  // section 1 = __text
+
+    // Set the code
+    builder.setTextCode(code)
+
+    return builder.build()
+}

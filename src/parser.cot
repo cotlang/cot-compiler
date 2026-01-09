@@ -27,9 +27,13 @@ struct Parser {
 impl Parser {
     // Create a new parser for the given source
     fn create(source: string) Parser {
+        println("[Parser.create] 1 creating lexer")
         var lex: Lexer = Lexer.create(source)
+        println("[Parser.create] 2 lexer created, scanning first token")
         var first_token: Token = lex.scanToken()
+        println("[Parser.create] 3 first token scanned: " + string(first_token.token_type as i64))
         var errs = new List<string>
+        println("[Parser.create] 4 returning parser")
 
         return Parser{
             .lexer = lex,
@@ -283,7 +287,7 @@ impl Parser {
             // String literal
             TokenType.StringLiteral => {
                 self.advance()
-                return makeStrExpr(token.lexeme, loc)
+                return makeStrExpr(processStringLiteral(token.lexeme), loc)
             }
 
             // Interpolated string: "Hello ${name}!"
@@ -831,6 +835,61 @@ fn makeStrExpr(value: string, loc: SourceLoc) *Expr {
     var e = makeDefaultExpr(ExprKind.StrLiteral, loc)
     e.str_value = value
     return e
+}
+
+// Process a string literal: strip quotes and handle escape sequences
+fn processStringLiteral(lexeme: string) string {
+    // Strip quotes if present
+    var str = lexeme
+    if (len(str) >= 2) {
+        str = str[1..len(str) - 1]
+    }
+
+    // Check if there are any backslashes (quick path)
+    var has_escape = false
+    var i: i64 = 0
+    while (i < len(str)) {
+        if (str[i..i + 1] == "\\") {
+            has_escape = true
+            break
+        }
+        i += 1
+    }
+
+    if (!has_escape) {
+        return str
+    }
+
+    // Process escape sequences
+    var result = ""
+    var j: i64 = 0
+    while (j < len(str)) {
+        if (str[j..j + 1] == "\\" and j + 1 < len(str)) {
+            var next = str[j + 1..j + 2]
+            if (next == "n") {
+                result = result + char(10)  // newline
+            } else if (next == "t") {
+                result = result + char(9)   // tab
+            } else if (next == "r") {
+                result = result + char(13)  // carriage return
+            } else if (next == "\\") {
+                result = result + "\\"
+            } else if (next == char(34)) {  // double quote
+                result = result + char(34)
+            } else if (next == "0") {
+                result = result + char(0)   // null
+            } else {
+                // Unknown escape, keep as-is
+                result = result + next
+            }
+            j += 2
+        } else {
+            result = result + str[j..j + 1]
+            j += 1
+        }
+    }
+
+    return result
 }
 
 fn makeBoolExpr(value: bool, loc: SourceLoc) *Expr {
@@ -2396,7 +2455,14 @@ impl Parser {
     fn parseModule(self: *Parser) Module {
         var mod = Module.init()
 
+        var iter_count: i64 = 0
         while (!self.isAtEnd()) {
+            iter_count += 1
+            if (iter_count > 10000) {
+                // Safety limit to prevent infinite loops
+                self.errorAtCurrent("Parser limit exceeded - possible infinite loop")
+                break
+            }
             var parsed_stmt: ?*Stmt = self.parseTopLevel()
             if (parsed_stmt != null) {
                 // Use coalescing with null-returning fallback for type compatibility

@@ -1,0 +1,36 @@
+// Test for list and struct operations
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    // Test list operations
+    var numbers = new List<i64>
+    numbers.push(10)
+    numbers.push(20)
+    numbers.push(30)
+
+    println(numbers.len())  // 3
+    println(numbers.get(0)) // 10
+    println(numbers.get(2)) // 30
+
+    numbers.set(1, 25)
+    println(numbers.get(1)) // 25
+
+    // Test struct
+    const p = Point{ .x = 5, .y = 10 }
+    println(p.x)
+    println(p.y)
+    println(p.x + p.y)
+
+    // Test map
+    var scores = new Map<string, i64>
+    scores.set("alice", 100)
+    scores.set("bob", 85)
+
+    println(scores.get("alice"))  // 100
+    println(scores.has("bob"))    // true
+    println(scores.len())         // 2
+}

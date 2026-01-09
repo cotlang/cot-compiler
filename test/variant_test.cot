@@ -1,0 +1,32 @@
+// Simple sum type (variant) test for cot-compiler
+
+enum Result {
+    Ok(value: i64),
+    Err(message: string),
+}
+
+fn makeOk(v: i64) Result {
+    return Result.Ok(v)
+}
+
+fn makeErr(msg: string) Result {
+    return Result.Err(msg)
+}
+
+fn unwrapOr(r: Result, default_val: i64) i64 {
+    switch (r) {
+        Result.Ok(v) => { return v }
+        Result.Err(_) => { return default_val }
+    }
+}
+
+fn main() {
+    const ok_result = makeOk(42)
+    const err_result = makeErr("something went wrong")
+
+    const val1 = unwrapOr(ok_result, 0)
+    const val2 = unwrapOr(err_result, -1)
+
+    println(val1)  // Should print 42
+    println(val2)  // Should print -1
+}

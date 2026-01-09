@@ -1,0 +1,39 @@
+// Simple test for native codegen
+// Tests: arithmetic, locals, control flow, function calls
+
+fn add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn factorial(n: i64) i64 {
+    if (n <= 1) {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+fn main() i64 {
+    var x = 10
+    var y = 20
+    var sum = add(x, y)
+
+    var fact5 = factorial(5)
+
+    // Test bitwise
+    var a = 0xFF
+    var b = a & 0x0F
+    var c = b | 0x10
+
+    // Test shifts
+    var d = 1 << 4  // 16
+    var e = 32 >> 2 // 8
+
+    // Test logical
+    var t = true
+    var f = false
+    var r = t and f  // false
+    var s = t or f   // true
+
+    // Return something meaningful
+    return sum + fact5  // 30 + 120 = 150
+}

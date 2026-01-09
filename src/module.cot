@@ -102,39 +102,33 @@ impl ModuleCache {
 
     // Resolve an import path to a file system path
     fn resolve(self: *ModuleCache, import_path: string) string {
-        println("[resolve] import_path: " + import_path)
-        println("[resolve] base_dir: " + self.base_dir)
         // Handle explicit relative paths
         if (startsWith(import_path, "./") or startsWith(import_path, "../")) {
-            var result = joinPath(self.base_dir, import_path + ".cot")
-            println("[resolve] relative result: " + result)
-            return result
+            return joinPath(self.base_dir, import_path + ".cot")
         }
 
         // Simple case: same directory
-        var result = joinPath(self.base_dir, import_path + ".cot")
-        println("[resolve] simple result: " + result)
-        return result
+        return joinPath(self.base_dir, import_path + ".cot")
     }
 
     // Load a module (read + parse), returns success
     fn load(self: *ModuleCache, import_path: string) bool {
-        println("[load] loading: " + import_path)
+        println("[load] 1 import_path=" + import_path)
         // Already loaded?
         if (self.has(import_path)) {
-            println("[load] already loaded")
+            println("[load] 2 already loaded")
             return true
         }
 
         // Resolve to file path
-        println("[load] resolving...")
+        println("[load] 3 resolving")
         var file_path = self.resolve(import_path)
-        println("[load] file_path: " + file_path)
+        println("[load] 4 file_path=" + file_path)
 
         // Read the file
-        println("[load] reading file...")
+        println("[load] 5 reading file")
         var source = read_file(file_path)
-        println("[load] got source, checking len...")
+        println("[load] 6 read " + string(len(source)) + " bytes")
         if (len(source) == 0) {
             self.errors.push("Could not read module: " + import_path + " (" + file_path + ")")
             return false
@@ -153,8 +147,13 @@ impl ModuleCache {
         }
 
         // Parse the module
+        println("[load] 7 creating parser")
         var parser = Parser.create(source)
-        var parsed = parser.parseModule()
+        println("[load] 8 parser created, parsing...")
+        // Workaround: explicitly take address for method call
+        var parser_ptr: *Parser = &parser
+        var parsed = parser_ptr.parseModule()
+        println("[load] 9 parsed " + string(parsed.statements.len()) + " statements")
 
         if (parsed.has_errors) {
             self.errors.push("Parse errors in module: " + import_path)

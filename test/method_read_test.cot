@@ -1,0 +1,28 @@
+// Test read_file from struct method
+
+struct Loader {
+    base: string,
+}
+
+impl Loader {
+    fn create(b: string) *Loader {
+        return new Loader{ .base = b }
+    }
+
+    fn loadFile(self: *Loader, name: string) string {
+        var path = self.base + "/" + name
+        println("[loadFile] path: " + path)
+        var source = read_file(path)
+        println("[loadFile] got source")
+        println("[loadFile] len = " + string(len(source)))
+        return source
+    }
+}
+
+fn main() i64 {
+    var loader = Loader.create("cot-compiler/test/imports")
+    println("loader created")
+    var src = loader.loadFile("main.cot")
+    println("src len: " + string(len(src)))
+    return 0
+}

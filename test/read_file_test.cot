@@ -1,0 +1,11 @@
+// Test read_file
+
+fn main() i64 {
+    var path = "cot-compiler/test/imports/main.cot"
+    println("about to read: " + path)
+    var source = read_file(path)
+    println("got source")
+    println("len = " + string(len(source)))
+    println("done")
+    return 0
+}

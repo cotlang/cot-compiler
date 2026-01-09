@@ -762,6 +762,11 @@ fn isErrorTypeId(reg: TypeRegistry, id: i64) bool {
     return reg.isErrorTypeId(id)
 }
 
+fn regIsIntegerType(reg: TypeRegistry, id: i64) bool {
+    // Check against known integer type IDs
+    return id == reg.i64_id or id == reg.i32_id
+}
+
 fn typesEqualById(reg: TypeRegistry, a_id: i64, b_id: i64) bool {
     return reg.typesEqual(a_id, b_id)
 }

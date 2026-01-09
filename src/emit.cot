@@ -90,6 +90,141 @@ const OP_CLEAR_ERROR_HANDLER: i64 = 107
 const OP_THROW: i64 = 108
 
 // =============================================================================
+// P0 Critical Opcodes - Required for Self-Hosting
+// =============================================================================
+
+// Stack pointer operations (0x7A-0x7C) - for struct-by-pointer passing
+const OP_GET_LOCAL_PTR: i64 = 0x7A
+const OP_LOAD_INDIRECT: i64 = 0x7B
+const OP_STORE_INDIRECT: i64 = 0x7C
+const OP_PTR_OFFSET: i64 = 0x59
+
+// Variant (sum type) operations (0x8A-0x8C)
+const OP_VARIANT_CONSTRUCT: i64 = 0x8A
+const OP_VARIANT_GET_TAG: i64 = 0x8B
+const OP_VARIANT_GET_PAYLOAD: i64 = 0x8C
+
+// ARC operations (0xF5-0xF7) - memory management
+const OP_ARC_RETAIN: i64 = 0xF5
+const OP_ARC_RELEASE: i64 = 0xF6
+const OP_ARC_MOVE: i64 = 0xF7
+
+// Closure operations (0xF8-0xF9)
+const OP_MAKE_CLOSURE: i64 = 0xF8
+const OP_CALL_CLOSURE: i64 = 0xF9
+
+// =============================================================================
+// P1 Important Opcodes - Full Language Support
+// =============================================================================
+
+// Comparison jump operations (0x64-0x67) - optimized branching
+const OP_JEQ: i64 = 0x64
+const OP_JNE: i64 = 0x65
+const OP_JLT: i64 = 0x66
+const OP_JGE: i64 = 0x67
+const OP_JMP32: i64 = 0x61
+const OP_LOOP_START: i64 = 0x68
+const OP_LOOP_END: i64 = 0x69
+
+// Increment/decrement operations (0x39-0x3A)
+const OP_INCR: i64 = 0x39
+const OP_DECR: i64 = 0x3A
+
+// Type checking operations
+const OP_IS_NULL: i64 = 0x57
+const OP_SELECT: i64 = 0x58
+const OP_IS_TYPE: i64 = 0x5C
+
+// String operations (0x92-0x9A)
+const OP_STR_INDEX: i64 = 0x92
+const OP_STR_SLICE: i64 = 0x93
+const OP_STR_SLICE_STORE: i64 = 0x94
+const OP_STR_TRIM: i64 = 0x95
+const OP_STR_UPPER: i64 = 0x96
+const OP_STR_LOWER: i64 = 0x97
+const OP_STR_FIND: i64 = 0x98
+const OP_STR_REPLACE: i64 = 0x99
+const OP_STR_SETCHAR: i64 = 0x9A
+
+// String comparison operations (0x46-0x4B)
+const OP_CMP_STR_EQ: i64 = 0x46
+const OP_CMP_STR_LT: i64 = 0x47
+const OP_CMP_STR_NE: i64 = 0x48
+const OP_CMP_STR_LE: i64 = 0x49
+const OP_CMP_STR_GT: i64 = 0x4A
+const OP_CMP_STR_GE: i64 = 0x4B
+
+// Struct-in-collection operations (0xB5-0xBA)
+const OP_LIST_PUSH_STRUCT: i64 = 0xB5
+const OP_LIST_GET_STRUCT: i64 = 0xB6
+const OP_LIST_POP_STRUCT: i64 = 0xB7
+const OP_LIST_SET_STRUCT: i64 = 0xB8
+const OP_MAP_SET_STRUCT: i64 = 0xB9
+const OP_MAP_GET_STRUCT: i64 = 0xBA
+
+// Call variant operations
+const OP_CALL_INDIRECT: i64 = 0x73
+const OP_CALL_DYNAMIC: i64 = 0x74
+const OP_PUSH_ARG: i64 = 0x77
+const OP_PUSH_ARG_REG: i64 = 0x78
+const OP_POP_ARG: i64 = 0x79
+
+// List extras
+const OP_LIST_CLEAR: i64 = 0xB4
+const OP_LIST_TO_SLICE: i64 = 0xBD
+
+// Map extras
+const OP_MAP_CLEAR: i64 = 0xDB
+const OP_MAP_KEYS: i64 = 0xDC
+const OP_MAP_VALUES: i64 = 0xDD
+const OP_MAP_GET_AT: i64 = 0xDE
+const OP_MAP_SET_AT: i64 = 0xDF
+const OP_MAP_KEY_AT: i64 = 0xFC
+
+// =============================================================================
+// P2 Nice-to-Have Opcodes
+// =============================================================================
+
+// Array operations (0xB0-0xBC)
+const OP_ARRAY_LOAD: i64 = 0xB0
+const OP_ARRAY_STORE: i64 = 0xB1
+const OP_ARRAY_LEN: i64 = 0xB2
+const OP_ARRAY_SLICE: i64 = 0xBB
+const OP_ARRAY_LOAD_OPT: i64 = 0xBC
+
+// Type conversion operations (0xA0-0xA7)
+const OP_TO_INT: i64 = 0xA0
+const OP_TO_STR: i64 = 0xA1
+const OP_TO_BOOL: i64 = 0xA2
+const OP_TO_DEC: i64 = 0xA3
+const OP_TO_CHAR: i64 = 0xA4
+const OP_TO_FIXED_STRING: i64 = 0xA5
+const OP_FORMAT_DECIMAL: i64 = 0xA6
+const OP_PARSE_DECIMAL: i64 = 0xA7
+
+// Record extras
+const OP_FREE_RECORD: i64 = 0x81
+const OP_CLEAR_RECORD: i64 = 0x88
+const OP_ALLOC_BUFFER: i64 = 0x89
+
+// Weak reference operations
+const OP_WEAK_REF: i64 = 0xF3
+const OP_WEAK_LOAD: i64 = 0xF4
+
+// Trait object operations
+const OP_MAKE_TRAIT_OBJECT: i64 = 0xFA
+const OP_CALL_TRAIT_METHOD: i64 = 0xFB
+
+// I/O operations
+const OP_READLN: i64 = 0xD2
+const OP_READKEY: i64 = 0xD3
+const OP_LOG: i64 = 0xD4
+
+// Debug operations
+const OP_DEBUG_BREAK: i64 = 0xF0
+const OP_ASSERT: i64 = 0xF2
+
+// =============================================================================
 // Constant Pool
 // =============================================================================
 
@@ -797,6 +932,622 @@ fn emitNop(e: BytecodeEmitter) {
 }
 
 // =============================================================================
+// P0 Critical Emit Functions - Required for Self-Hosting
+// =============================================================================
+
+// Stack pointer operations - for passing structs by pointer
+
+/// get_local_ptr rd, slot - rd = stack pointer to local slot
+/// Format: [rd:4|0] [slot:16]
+fn emitGetLocalPtr(e: BytecodeEmitter, rd: i64, slot: i64) {
+    emitRegU16(e, OP_GET_LOCAL_PTR, rd, slot)
+}
+
+/// load_indirect rd, rs, offset - rd = ptr_val[offset]
+/// Format: [rd:4|rs:4] [offset:16]
+fn emitLoadIndirect(e: BytecodeEmitter, rd: i64, rs: i64, offset: i64) {
+    emitOpcode(e, OP_LOAD_INDIRECT)
+    emitByte(e, packRegs(rd, rs))
+    emitU16(e, offset)
+}
+
+/// store_indirect rs_ptr, offset, rs_val - ptr_val[offset] = rs_val
+/// Format: [rs_ptr:4|rs_val:4] [offset:16]
+fn emitStoreIndirect(e: BytecodeEmitter, rs_ptr: i64, offset: i64, rs_val: i64) {
+    emitOpcode(e, OP_STORE_INDIRECT)
+    emitByte(e, packRegs(rs_ptr, rs_val))
+    emitU16(e, offset)
+}
+
+/// ptr_offset rd, rs, offset - pointer arithmetic for derived pointers
+/// Format: [rd:4|rs:4] [offset:16]
+fn emitPtrOffset(e: BytecodeEmitter, rd: i64, rs: i64, offset: i64) {
+    emitOpcode(e, OP_PTR_OFFSET)
+    emitByte(e, packRegs(rd, rs))
+    emitU16(e, offset)
+}
+
+// Variant (sum type) operations
+
+/// variant_construct rd, tag, argc - construct variant with payload
+/// Payload values are in r0..r(argc-1)
+/// Format: [rd:4|argc:4] [tag:16]
+fn emitVariantConstruct(e: BytecodeEmitter, rd: i64, tag: i64, argc: i64) {
+    emitOpcode(e, OP_VARIANT_CONSTRUCT)
+    emitByte(e, packRegs(rd, argc))
+    emitU16(e, tag)
+}
+
+/// variant_get_tag rd, src_reg - get the tag from a variant
+/// Format: [rd:4|src_reg:4] [0]
+fn emitVariantGetTag(e: BytecodeEmitter, rd: i64, src: i64) {
+    emitRegReg(e, OP_VARIANT_GET_TAG, rd, src)
+}
+
+/// variant_get_payload rd, src_reg, field_idx - get payload field from variant
+/// Format: [rd:4|src_reg:4] [field_idx:16]
+fn emitVariantGetPayload(e: BytecodeEmitter, rd: i64, src: i64, field_idx: i64) {
+    emitOpcode(e, OP_VARIANT_GET_PAYLOAD)
+    emitByte(e, packRegs(rd, src))
+    emitU16(e, field_idx)
+}
+
+// ARC (Automatic Reference Counting) operations
+
+/// arc_retain rs - increment reference count of heap value
+/// Format: [rs:4|0] [0]
+fn emitArcRetain(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_ARC_RETAIN, rs, 0)
+}
+
+/// arc_release rs - decrement reference count (may free)
+/// Format: [rs:4|0] [0]
+fn emitArcRelease(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_ARC_RELEASE, rs, 0)
+}
+
+/// arc_move rd, rs - move value without ARC (transfer ownership)
+/// Format: [rd:4|rs:4] [0]
+fn emitArcMove(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_ARC_MOVE, rd, rs)
+}
+
+// Closure operations
+
+/// make_closure rd, env_reg, fn_idx - create closure from function and environment
+/// Format: [rd:4|env_reg:4] [fn_idx:16]
+fn emitMakeClosure(e: BytecodeEmitter, rd: i64, env_reg: i64, fn_idx: i64) {
+    emitOpcode(e, OP_MAKE_CLOSURE)
+    emitByte(e, packRegs(rd, env_reg))
+    emitU16(e, fn_idx)
+}
+
+/// call_closure rd, closure_reg, argc - call a closure
+/// Format: [rd:4|closure_reg:4] [argc:8]
+fn emitCallClosure(e: BytecodeEmitter, rd: i64, closure_reg: i64, argc: i64) {
+    emitOpcode(e, OP_CALL_CLOSURE)
+    emitByte(e, packRegs(rd, closure_reg))
+    emitByte(e, argc)
+}
+
+// =============================================================================
+// P1 Important Emit Functions - Full Language Support
+// =============================================================================
+
+// Comparison jump operations
+
+/// jeq rs1, rs2, offset - jump if rs1 == rs2
+/// Format: [rs1:4|rs2:4] [offset:16]
+fn emitJeq(e: BytecodeEmitter, rs1: i64, rs2: i64, offset: i64) {
+    emitOpcode(e, OP_JEQ)
+    emitByte(e, packRegs(rs1, rs2))
+    emitU16(e, offset)
+}
+
+/// jne rs1, rs2, offset - jump if rs1 != rs2
+fn emitJne(e: BytecodeEmitter, rs1: i64, rs2: i64, offset: i64) {
+    emitOpcode(e, OP_JNE)
+    emitByte(e, packRegs(rs1, rs2))
+    emitU16(e, offset)
+}
+
+/// jlt rs1, rs2, offset - jump if rs1 < rs2
+fn emitJlt(e: BytecodeEmitter, rs1: i64, rs2: i64, offset: i64) {
+    emitOpcode(e, OP_JLT)
+    emitByte(e, packRegs(rs1, rs2))
+    emitU16(e, offset)
+}
+
+/// jge rs1, rs2, offset - jump if rs1 >= rs2
+fn emitJge(e: BytecodeEmitter, rs1: i64, rs2: i64, offset: i64) {
+    emitOpcode(e, OP_JGE)
+    emitByte(e, packRegs(rs1, rs2))
+    emitU16(e, offset)
+}
+
+/// jmp32 offset - unconditional jump with 32-bit offset
+/// Format: [0] [offset:32]
+fn emitJmp32(e: BytecodeEmitter, offset: i64) {
+    emitOpcode(e, OP_JMP32)
+    emitU32(e, offset)
+}
+
+/// loop_start - mark start of loop (for profiling)
+fn emitLoopStart(e: BytecodeEmitter) {
+    emitOpcode(e, OP_LOOP_START)
+}
+
+/// loop_end - mark end of loop
+fn emitLoopEnd(e: BytecodeEmitter) {
+    emitOpcode(e, OP_LOOP_END)
+}
+
+// Increment/decrement operations
+
+/// incr rd - rd = rd + 1
+/// Format: [rd:4|0] [0]
+fn emitIncr(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_INCR, rd, 0)
+}
+
+/// decr rd - rd = rd - 1
+/// Format: [rd:4|0] [0]
+fn emitDecr(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_DECR, rd, 0)
+}
+
+// Type checking operations
+
+/// is_null rd, rs - rd = (rs == null)
+/// Format: [rd:4|rs:4] [0]
+fn emitIsNull(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_IS_NULL, rd, rs)
+}
+
+/// select rd, cond, rtrue, rfalse - rd = cond ? rtrue : rfalse
+/// Format: [rd:4|cond:4] [rtrue:4|rfalse:4]
+fn emitSelect(e: BytecodeEmitter, rd: i64, cond: i64, rtrue: i64, rfalse: i64) {
+    emitOpcode(e, OP_SELECT)
+    emitByte(e, packRegs(rd, cond))
+    emitByte(e, packRegs(rtrue, rfalse))
+}
+
+/// is_type rd, rs, type_tag - rd = (rs is type_tag)
+/// Format: [rd:4|rs:4] [type_tag:8]
+fn emitIsType(e: BytecodeEmitter, rd: i64, rs: i64, type_tag: i64) {
+    emitOpcode(e, OP_IS_TYPE)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, type_tag)
+}
+
+// String operations
+
+/// str_index rd, rs, idx_reg - rd = rs[idx_reg]
+/// Format: [rd:4|rs:4] [idx_reg:4|0]
+fn emitStrIndex(e: BytecodeEmitter, rd: i64, rs: i64, idx_reg: i64) {
+    emitOpcode(e, OP_STR_INDEX)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, packRegs(idx_reg, 0))
+}
+
+/// str_slice rd, rs, start_reg, len_reg - rd = rs[start:start+len]
+/// Format: [rd:4|rs:4] [start_reg:4|len_reg:4]
+fn emitStrSlice(e: BytecodeEmitter, rd: i64, rs: i64, start_reg: i64, len_reg: i64) {
+    emitOpcode(e, OP_STR_SLICE)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, packRegs(start_reg, len_reg))
+}
+
+/// str_slice_store rd, start_reg, len_reg, val_reg - rd[start:len] = val
+/// Format: [rd:4|start_reg:4] [len_reg:4|val_reg:4]
+fn emitStrSliceStore(e: BytecodeEmitter, rd: i64, start_reg: i64, len_reg: i64, val_reg: i64) {
+    emitOpcode(e, OP_STR_SLICE_STORE)
+    emitByte(e, packRegs(rd, start_reg))
+    emitByte(e, packRegs(len_reg, val_reg))
+}
+
+/// str_trim rd, rs - rd = trim(rs)
+fn emitStrTrim(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_STR_TRIM, rd, rs)
+}
+
+/// str_upper rd, rs - rd = upper(rs)
+fn emitStrUpper(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_STR_UPPER, rd, rs)
+}
+
+/// str_lower rd, rs - rd = lower(rs)
+fn emitStrLower(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_STR_LOWER, rd, rs)
+}
+
+/// str_find rd, rs1, rs2 - rd = find position of rs2 in rs1
+fn emitStrFind(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_STR_FIND, rd, rs1, rs2)
+}
+
+/// str_replace rd, rs, old_reg, new_reg - rd = replace in rs
+/// Format: [rd:4|rs:4] [old_reg:4|new_reg:4]
+fn emitStrReplace(e: BytecodeEmitter, rd: i64, rs: i64, old_reg: i64, new_reg: i64) {
+    emitOpcode(e, OP_STR_REPLACE)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, packRegs(old_reg, new_reg))
+}
+
+/// str_setchar rd, idx_reg, char_reg - rd[idx] = char
+/// Format: [rd:4|idx_reg:4] [char_reg:4|0]
+fn emitStrSetchar(e: BytecodeEmitter, rd: i64, idx_reg: i64, char_reg: i64) {
+    emitOpcode(e, OP_STR_SETCHAR)
+    emitByte(e, packRegs(rd, idx_reg))
+    emitByte(e, packRegs(char_reg, 0))
+}
+
+// String comparison operations
+
+fn emitCmpStrEq(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_STR_EQ, rd, rs1, rs2)
+}
+
+fn emitCmpStrLt(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_STR_LT, rd, rs1, rs2)
+}
+
+fn emitCmpStrNe(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_STR_NE, rd, rs1, rs2)
+}
+
+fn emitCmpStrLe(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_STR_LE, rd, rs1, rs2)
+}
+
+fn emitCmpStrGt(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_STR_GT, rd, rs1, rs2)
+}
+
+fn emitCmpStrGe(e: BytecodeEmitter, rd: i64, rs1: i64, rs2: i64) {
+    emitReg3(e, OP_CMP_STR_GE, rd, rs1, rs2)
+}
+
+// Struct-in-collection operations
+
+/// list_push_struct list_reg, base_slot, field_count - push struct from consecutive slots
+/// Format: [list:4|0] [field_count:8] [base_slot:16]
+fn emitListPushStruct(e: BytecodeEmitter, list_reg: i64, base_slot: i64, field_count: i64) {
+    emitOpcode(e, OP_LIST_PUSH_STRUCT)
+    emitByte(e, packRegs(list_reg, 0))
+    emitByte(e, field_count)
+    emitU16(e, base_slot)
+}
+
+/// list_get_struct list_reg, idx_reg, field_count, base_reg - get struct to high registers
+/// Format: [list:4|idx:4] [field_count:8] [base_reg:8] [0]
+fn emitListGetStruct(e: BytecodeEmitter, list_reg: i64, idx_reg: i64, field_count: i64, base_reg: i64) {
+    emitOpcode(e, OP_LIST_GET_STRUCT)
+    emitByte(e, packRegs(list_reg, idx_reg))
+    emitByte(e, field_count)
+    emitByte(e, base_reg)
+    emitByte(e, 0)
+}
+
+/// list_pop_struct dest_slot, list_reg, field_count - pop struct to slots
+/// Format: [list:4|0] [field_count:8] [dest_slot:16]
+fn emitListPopStruct(e: BytecodeEmitter, list_reg: i64, dest_slot: i64, field_count: i64) {
+    emitOpcode(e, OP_LIST_POP_STRUCT)
+    emitByte(e, packRegs(list_reg, 0))
+    emitByte(e, field_count)
+    emitU16(e, dest_slot)
+}
+
+/// list_set_struct list_reg, idx_reg, base_slot, field_count - set struct from slots
+/// Format: [list:4|idx:4] [field_count:8] [base_slot:16]
+fn emitListSetStruct(e: BytecodeEmitter, list_reg: i64, idx_reg: i64, base_slot: i64, field_count: i64) {
+    emitOpcode(e, OP_LIST_SET_STRUCT)
+    emitByte(e, packRegs(list_reg, idx_reg))
+    emitByte(e, field_count)
+    emitU16(e, base_slot)
+}
+
+/// map_set_struct map_reg, key_reg, base_slot, field_count - store struct to map
+/// Format: [map:4|key:4] [field_count:8] [base_slot:16]
+fn emitMapSetStruct(e: BytecodeEmitter, map_reg: i64, key_reg: i64, base_slot: i64, field_count: i64) {
+    emitOpcode(e, OP_MAP_SET_STRUCT)
+    emitByte(e, packRegs(map_reg, key_reg))
+    emitByte(e, field_count)
+    emitU16(e, base_slot)
+}
+
+/// map_get_struct map_reg, key_reg, field_count, base_reg - get struct from map
+/// Format: [map:4|key:4] [field_count:8] [base_reg:8] [0]
+fn emitMapGetStruct(e: BytecodeEmitter, map_reg: i64, key_reg: i64, field_count: i64, base_reg: i64) {
+    emitOpcode(e, OP_MAP_GET_STRUCT)
+    emitByte(e, packRegs(map_reg, key_reg))
+    emitByte(e, field_count)
+    emitByte(e, base_reg)
+    emitByte(e, 0)
+}
+
+// Call variant operations
+
+/// call_indirect rs, argc - call function pointer in rs
+/// Format: [argc:4|rs:4] [0]
+fn emitCallIndirect(e: BytecodeEmitter, rs: i64, argc: i64) {
+    emitOpcode(e, OP_CALL_INDIRECT)
+    emitByte(e, packRegs(argc, rs))
+    emitByte(e, 0)
+}
+
+/// call_dynamic name_idx, argc - call by name at runtime
+/// Format: [argc:4|0] [name_idx:16]
+fn emitCallDynamic(e: BytecodeEmitter, name_idx: i64, argc: i64) {
+    emitOpcode(e, OP_CALL_DYNAMIC)
+    emitByte(e, packRegs(argc, 0))
+    emitU16(e, name_idx)
+}
+
+/// push_arg slot - push local slot value to stack for overflow args
+/// Format: [slot_lo:8] [slot_hi:8]
+fn emitPushArg(e: BytecodeEmitter, slot: i64) {
+    emitOpcode(e, OP_PUSH_ARG)
+    emitU16(e, slot)
+}
+
+/// push_arg_reg rs - push register value to stack for overflow args
+/// Format: [rs:4|0] [0]
+fn emitPushArgReg(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_PUSH_ARG_REG, rs, 0)
+}
+
+/// pop_arg slot - pop stack value to local slot (callee prologue)
+/// Format: [slot_lo:8] [slot_hi:8]
+fn emitPopArg(e: BytecodeEmitter, slot: i64) {
+    emitOpcode(e, OP_POP_ARG)
+    emitU16(e, slot)
+}
+
+// List extras
+
+/// list_clear list_reg - list.clear()
+/// Format: [list:4|0] [0]
+fn emitListClear(e: BytecodeEmitter, list_reg: i64) {
+    emitRegReg(e, OP_LIST_CLEAR, list_reg, 0)
+}
+
+/// list_to_slice rd, list_reg - rd = list.to_slice()
+/// Format: [rd:4|list:4] [0]
+fn emitListToSlice(e: BytecodeEmitter, rd: i64, list_reg: i64) {
+    emitRegReg(e, OP_LIST_TO_SLICE, rd, list_reg)
+}
+
+// Map extras
+
+/// map_clear map_reg - map.clear()
+/// Format: [map:4|0] [0]
+fn emitMapClear(e: BytecodeEmitter, map_reg: i64) {
+    emitRegReg(e, OP_MAP_CLEAR, map_reg, 0)
+}
+
+/// map_keys rd, map_reg - rd = array of keys
+/// Format: [rd:4|map:4] [0]
+fn emitMapKeys(e: BytecodeEmitter, rd: i64, map_reg: i64) {
+    emitRegReg(e, OP_MAP_KEYS, rd, map_reg)
+}
+
+/// map_values rd, map_reg - rd = array of values
+/// Format: [rd:4|map:4] [0]
+fn emitMapValues(e: BytecodeEmitter, rd: i64, map_reg: i64) {
+    emitRegReg(e, OP_MAP_VALUES, rd, map_reg)
+}
+
+/// map_get_at rd, map_reg, idx_reg - rd = map entry at position (1-based)
+/// Format: [rd:4|map:4] [idx:4|0]
+fn emitMapGetAt(e: BytecodeEmitter, rd: i64, map_reg: i64, idx_reg: i64) {
+    emitOpcode(e, OP_MAP_GET_AT)
+    emitByte(e, packRegs(rd, map_reg))
+    emitByte(e, packRegs(idx_reg, 0))
+}
+
+/// map_set_at map_reg, idx_reg, val_reg - map[pos] = val (by position)
+/// Format: [map:4|idx:4] [val:4|0]
+fn emitMapSetAt(e: BytecodeEmitter, map_reg: i64, idx_reg: i64, val_reg: i64) {
+    emitOpcode(e, OP_MAP_SET_AT)
+    emitByte(e, packRegs(map_reg, idx_reg))
+    emitByte(e, packRegs(val_reg, 0))
+}
+
+/// map_key_at rd, map_reg, idx_reg - rd = key at position (1-based)
+/// Format: [rd:4|map:4] [idx:4|0]
+fn emitMapKeyAt(e: BytecodeEmitter, rd: i64, map_reg: i64, idx_reg: i64) {
+    emitOpcode(e, OP_MAP_KEY_AT)
+    emitByte(e, packRegs(rd, map_reg))
+    emitByte(e, packRegs(idx_reg, 0))
+}
+
+// =============================================================================
+// P2 Nice-to-Have Emit Functions
+// =============================================================================
+
+// Array operations
+
+/// array_load idx_reg, slot - load arr[idx] into r0
+/// Format: [idx_reg:8] [slot:16]
+fn emitArrayLoad(e: BytecodeEmitter, idx_reg: i64, slot: i64) {
+    emitOpcode(e, OP_ARRAY_LOAD)
+    emitByte(e, idx_reg)
+    emitU16(e, slot)
+}
+
+/// array_store idx_reg, val_reg, slot - arr[idx] = val
+/// Format: [idx_reg:4|val_reg:4] [slot:16]
+fn emitArrayStore(e: BytecodeEmitter, idx_reg: i64, val_reg: i64, slot: i64) {
+    emitOpcode(e, OP_ARRAY_STORE)
+    emitByte(e, packRegs(idx_reg, val_reg))
+    emitU16(e, slot)
+}
+
+/// array_len rd, slot - rd = len(arr)
+/// Format: [rd:8] [slot:16]
+fn emitArrayLen(e: BytecodeEmitter, rd: i64, slot: i64) {
+    emitOpcode(e, OP_ARRAY_LEN)
+    emitByte(e, rd)
+    emitU16(e, slot)
+}
+
+/// array_slice rd, start_reg, end_reg, slot - rd = arr[start..end]
+/// Format: [rd:4|inclusive:1|0:3] [start_reg:4|end_reg:4] [slot_lo:8] [slot_hi:8]
+fn emitArraySlice(e: BytecodeEmitter, rd: i64, start_reg: i64, end_reg: i64, slot: i64, inclusive: bool) {
+    emitOpcode(e, OP_ARRAY_SLICE)
+    var flags: i64 = 0
+    if (inclusive) {
+        flags = 0x08
+    }
+    emitByte(e, packRegs(rd, flags))
+    emitByte(e, packRegs(start_reg, end_reg))
+    emitU16(e, slot)
+}
+
+// Type conversion operations
+
+/// to_int rd, rs - rd = int(rs)
+fn emitToInt(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_TO_INT, rd, rs)
+}
+
+/// to_str rd, rs - rd = str(rs)
+fn emitToStr(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_TO_STR, rd, rs)
+}
+
+/// to_bool rd, rs - rd = bool(rs)
+fn emitToBool(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_TO_BOOL, rd, rs)
+}
+
+/// to_dec rd, rs, prec - rd = decimal(rs, precision)
+/// Format: [rd:4|rs:4] [prec:8]
+fn emitToDec(e: BytecodeEmitter, rd: i64, rs: i64, prec: i64) {
+    emitOpcode(e, OP_TO_DEC)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, prec)
+}
+
+/// to_char rd, rs - rd = char(rs) (int to single char string)
+fn emitToChar(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_TO_CHAR, rd, rs)
+}
+
+/// to_fixed_string rd, rs, size - rd = fixed_string(rs, size)
+/// Format: [rd:4|rs:4] [size:16]
+fn emitToFixedString(e: BytecodeEmitter, rd: i64, rs: i64, size: i64) {
+    emitOpcode(e, OP_TO_FIXED_STRING)
+    emitByte(e, packRegs(rd, rs))
+    emitU16(e, size)
+}
+
+/// format_decimal rd, rs, width - rd = zero-padded decimal string of rs
+/// Format: [rd:4|rs:4] [width:8]
+fn emitFormatDecimal(e: BytecodeEmitter, rd: i64, rs: i64, width: i64) {
+    emitOpcode(e, OP_FORMAT_DECIMAL)
+    emitByte(e, packRegs(rd, rs))
+    emitByte(e, width)
+}
+
+/// parse_decimal rd, rs - rd = integer parsed from string rs
+/// Format: [rd:4|rs:4] [0]
+fn emitParseDecimal(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_PARSE_DECIMAL, rd, rs)
+}
+
+// Record extras
+
+/// free_record rs - free record in rs
+/// Format: [rs:4|0] [0]
+fn emitFreeRecord(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_FREE_RECORD, rs, 0)
+}
+
+/// clear_record rs - clear record fields
+/// Format: [rs:4|0] [0]
+fn emitClearRecord(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_CLEAR_RECORD, rs, 0)
+}
+
+/// alloc_buffer slot, size - allocate mutable buffer of given size
+/// Format: [slot:8] [size:16]
+fn emitAllocBuffer(e: BytecodeEmitter, slot: i64, size: i64) {
+    emitOpcode(e, OP_ALLOC_BUFFER)
+    emitByte(e, slot)
+    emitU16(e, size)
+}
+
+// Weak reference operations
+
+/// weak_ref rd, rs - create weak reference: rd = weak(rs)
+/// Format: [rd:4|rs:4] [0]
+fn emitWeakRef(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_WEAK_REF, rd, rs)
+}
+
+/// weak_load rd, rs - load from weak reference: rd = *rs (or null if freed)
+/// Format: [rd:4|rs:4] [0]
+fn emitWeakLoad(e: BytecodeEmitter, rd: i64, rs: i64) {
+    emitRegReg(e, OP_WEAK_LOAD, rd, rs)
+}
+
+// Trait object operations
+
+/// make_trait_object rd, src_reg, vtable_idx - create trait object from value
+/// Format: [rd:4|src_reg:4] [vtable_idx:16]
+fn emitMakeTraitObject(e: BytecodeEmitter, rd: i64, src_reg: i64, vtable_idx: i64) {
+    emitOpcode(e, OP_MAKE_TRAIT_OBJECT)
+    emitByte(e, packRegs(rd, src_reg))
+    emitU16(e, vtable_idx)
+}
+
+/// call_trait_method rd, obj_reg, method_idx, argc - call method on trait object
+/// Format: [rd:4|obj_reg:4] [method_idx:8] [argc:8]
+fn emitCallTraitMethod(e: BytecodeEmitter, rd: i64, obj_reg: i64, method_idx: i64, argc: i64) {
+    emitOpcode(e, OP_CALL_TRAIT_METHOD)
+    emitByte(e, packRegs(rd, obj_reg))
+    emitByte(e, method_idx)
+    emitByte(e, argc)
+}
+
+// I/O operations
+
+/// readln rd - rd = read line from stdin
+/// Format: [rd:4|0] [0]
+fn emitReadln(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_READLN, rd, 0)
+}
+
+/// readkey rd - rd = read single key
+/// Format: [rd:4|0] [0]
+fn emitReadkey(e: BytecodeEmitter, rd: i64) {
+    emitRegReg(e, OP_READKEY, rd, 0)
+}
+
+/// log rs, argc - write to stderr (debugging)
+/// Format: [rs:4|argc:4] [0]
+fn emitLog(e: BytecodeEmitter, rs: i64, argc: i64) {
+    emitOpcode(e, OP_LOG)
+    emitByte(e, packRegs(rs, argc))
+    emitByte(e, 0)
+}
+
+// Debug operations
+
+/// debug_break - debugger breakpoint
+fn emitDebugBreak(e: BytecodeEmitter) {
+    emitOpcode(e, OP_DEBUG_BREAK)
+}
+
+/// assert rs - assert rs is true
+/// Format: [rs:4|0] [0]
+fn emitAssert(e: BytecodeEmitter, rs: i64) {
+    emitRegReg(e, OP_ASSERT, rs, 0)
+}
+
+// =============================================================================
 // Variable Management
 // =============================================================================
 
@@ -1159,6 +1910,14 @@ const IR_SET_HANDLER: i64 = 69
 const IR_CLEAR_HANDLER: i64 = 70
 const IR_ERR_THROW: i64 = 71
 
+// P0: Slicing and sum type operations (must match ir.cot)
+const IR_SLICE_NEW: i64 = 72
+const IR_VARIANT_CONSTRUCT: i64 = 73
+const IR_VARIANT_GET_TAG: i64 = 74
+const IR_VARIANT_GET_PAYLOAD: i64 = 75
+const IR_MAKE_CLOSURE: i64 = 76
+const IR_PHI: i64 = 77
+
 // Comparison condition codes (must match ir.cot)
 const COND_EQ: i64 = 0
 const COND_NE: i64 = 1
@@ -1303,6 +2062,22 @@ fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op
             emitMod(e, rd, rs1, rs2)
         }
 
+        IR_UDIV => {
+            // Unsigned division - same opcode as signed for now
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitDiv(e, rd, rs1, rs2)
+        }
+
+        IR_UREM => {
+            // Unsigned modulo - same opcode as signed for now
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitMod(e, rd, rs1, rs2)
+        }
+
         IR_INEG => {
             const rd = tcAllocReg(ctx, result_id)
             const rs = tcGetReg(ctx, op1_id)
@@ -1344,6 +2119,14 @@ fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op
         }
 
         IR_SSHR => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitShr(e, rd, rs1, rs2)
+        }
+
+        IR_USHR => {
+            // Unsigned shift right - same opcode for now
             const rd = tcAllocReg(ctx, result_id)
             const rs1 = tcGetReg(ctx, op1_id)
             const rs2 = tcGetReg(ctx, op2_id)
@@ -1403,6 +2186,179 @@ fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op
 
         IR_ALLOCA => {
             tcAllocLocal(ctx, str_val)
+        }
+
+        IR_FIELD_PTR => {
+            // Get pointer to struct field
+            const rd = tcAllocReg(ctx, result_id)
+            const base_reg = tcGetReg(ctx, op1_id)
+            const offset = field_idx
+            emitPtrOffset(e, rd, base_reg, offset)
+        }
+
+        IR_INDEX_PTR => {
+            // Get pointer to array/slice element
+            const rd = tcAllocReg(ctx, result_id)
+            const base_reg = tcGetReg(ctx, op1_id)
+            const idx_reg = tcGetReg(ctx, op2_id)
+            // For index_ptr, we use load_indirect with dynamic offset
+            emitPtrOffset(e, rd, base_reg, 0)  // Base calculation
+        }
+
+        IR_FADD => {
+            // Float add - uses same opcode as int add
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitAdd(e, rd, rs1, rs2)
+        }
+
+        IR_FSUB => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitSub(e, rd, rs1, rs2)
+        }
+
+        IR_FMUL => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitMul(e, rd, rs1, rs2)
+        }
+
+        IR_FDIV => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            emitDiv(e, rd, rs1, rs2)
+        }
+
+        IR_FNEG => {
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitNeg(e, rd, rs)
+        }
+
+        IR_FCMP => {
+            // Float compare - uses same opcodes as int compare
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            switch (cond) {
+                COND_EQ => { emitCmpEq(e, rd, rs1, rs2) }
+                COND_NE => { emitCmpNe(e, rd, rs1, rs2) }
+                COND_SLT => { emitCmpLt(e, rd, rs1, rs2) }
+                COND_SLE => { emitCmpLe(e, rd, rs1, rs2) }
+                COND_SGT => { emitCmpGt(e, rd, rs1, rs2) }
+                COND_SGE => { emitCmpGe(e, rd, rs1, rs2) }
+                else => { emitCmpEq(e, rd, rs1, rs2) }
+            }
+        }
+
+        IR_BITCAST => {
+            // Bitcast - reinterpret bits, just move for now
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitMov(e, rd, rs)
+        }
+
+        IR_SEXTEND => {
+            // Sign extend - move for now (VM handles types dynamically)
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitMov(e, rd, rs)
+        }
+
+        IR_UEXTEND => {
+            // Zero extend - move for now
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitMov(e, rd, rs)
+        }
+
+        IR_IREDUCE => {
+            // Integer reduce (truncate) - move for now
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitMov(e, rd, rs)
+        }
+
+        IR_INT_TO_FLOAT => {
+            // Convert int to float
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitToDec(e, rd, rs, 0)  // Default precision
+        }
+
+        IR_FLOAT_TO_INT => {
+            // Convert float to int
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitToInt(e, rd, rs)
+        }
+
+        IR_WRAP_OPTIONAL => {
+            // Wrap value in optional (value becomes Some(value))
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitMov(e, rd, rs)  // For now, optionals are transparent
+        }
+
+        IR_UNWRAP_OPTIONAL => {
+            // Unwrap optional value
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitMov(e, rd, rs)  // For now, just move the value
+        }
+
+        IR_ARRAY_LOAD => {
+            // Load from array at index
+            const rd = tcAllocReg(ctx, result_id)
+            const arr_reg = tcGetReg(ctx, op1_id)
+            const idx_reg = tcGetReg(ctx, op2_id)
+            emitArrayLoad(e, idx_reg, arr_reg)
+            emitMov(e, rd, 15)  // Result in r15
+        }
+
+        IR_ARRAY_STORE => {
+            // Store to array at index
+            const arr_reg = tcGetReg(ctx, op1_id)
+            const idx_reg = tcGetReg(ctx, op2_id)
+            const val_reg = tcGetReg(ctx, op3_id)
+            emitArrayStore(e, idx_reg, val_reg, arr_reg)
+        }
+
+        IR_ARRAY_LEN => {
+            // Get array length
+            const rd = tcAllocReg(ctx, result_id)
+            const arr_reg = tcGetReg(ctx, op1_id)
+            emitArrayLen(e, rd, arr_reg)
+        }
+
+        IR_SLICE_NEW => {
+            // Create slice from array[start..end]
+            const rd = tcAllocReg(ctx, result_id)
+            const start_reg = tcGetReg(ctx, op1_id)
+            const end_reg = tcGetReg(ctx, op2_id)
+            const arr_slot = int_val  // Array source slot
+            emitArraySlice(e, rd, start_reg, end_reg, arr_slot, false)
+        }
+
+        IR_STR_COMPARE => {
+            // String comparison
+            const rd = tcAllocReg(ctx, result_id)
+            const rs1 = tcGetReg(ctx, op1_id)
+            const rs2 = tcGetReg(ctx, op2_id)
+            switch (cond) {
+                COND_EQ => { emitCmpStrEq(e, rd, rs1, rs2) }
+                COND_NE => { emitCmpStrNe(e, rd, rs1, rs2) }
+                COND_SLT => { emitCmpStrLt(e, rd, rs1, rs2) }
+                COND_SLE => { emitCmpStrLe(e, rd, rs1, rs2) }
+                COND_SGT => { emitCmpStrGt(e, rd, rs1, rs2) }
+                COND_SGE => { emitCmpStrGe(e, rd, rs1, rs2) }
+                else => { emitCmpStrEq(e, rd, rs1, rs2) }
+            }
         }
 
         IR_STR_CONCAT => {
@@ -1506,6 +2462,14 @@ fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op
             emitAddPendingJump(e, else_block, false)
         }
 
+        IR_BRTABLE => {
+            // Branch table for switch statements
+            // For now, emit as unconditional jump to default
+            // Full implementation would use indexed branch table
+            emitJmp(e, 0)
+            emitAddPendingJump(e, target_block, false)
+        }
+
         IR_RET => {
             if (op1_id >= 0) {
                 const rs = tcGetReg(ctx, op1_id)
@@ -1546,6 +2510,68 @@ fn translateInst(ctx: TranslateContext, op: i64, result_id: i64, op1_id: i64, op
             // Throw error value
             const rs = tcGetReg(ctx, op1_id)
             emitThrow(e, rs)
+        }
+
+        IR_IS_NULL => {
+            // Check if optional value is null
+            const rd = tcAllocReg(ctx, result_id)
+            const rs = tcGetReg(ctx, op1_id)
+            emitIsNull(e, rd, rs)
+        }
+
+        IR_SELECT => {
+            // Conditional select: rd = cond ? op1 : op2
+            const rd = tcAllocReg(ctx, result_id)
+            const cond_reg = tcGetReg(ctx, op1_id)
+            const true_reg = tcGetReg(ctx, op2_id)
+            const false_reg = tcGetReg(ctx, op3_id)
+            emitSelect(e, rd, cond_reg, true_reg, false_reg)
+        }
+
+        IR_VARIANT_CONSTRUCT => {
+            // Construct a variant (sum type) with tag and payload
+            const rd = tcAllocReg(ctx, result_id)
+            const tag = int_val
+            const argc = field_idx  // Number of payload values
+            emitVariantConstruct(e, rd, tag, argc)
+        }
+
+        IR_VARIANT_GET_TAG => {
+            // Extract tag from variant
+            const rd = tcAllocReg(ctx, result_id)
+            const src = tcGetReg(ctx, op1_id)
+            emitVariantGetTag(e, rd, src)
+        }
+
+        IR_VARIANT_GET_PAYLOAD => {
+            // Extract payload field from variant
+            const rd = tcAllocReg(ctx, result_id)
+            const src = tcGetReg(ctx, op1_id)
+            const payload_idx = field_idx
+            emitVariantGetPayload(e, rd, src, payload_idx)
+        }
+
+        IR_MAKE_CLOSURE => {
+            // Create closure from function and environment
+            const rd = tcAllocReg(ctx, result_id)
+            const env_reg = tcGetReg(ctx, op1_id)
+            var fn_idx: i64 = 0
+            if (e.function_indices.has(callee)) {
+                fn_idx = e.function_indices.get(callee)
+            }
+            emitMakeClosure(e, rd, env_reg, fn_idx)
+        }
+
+        IR_PHI => {
+            // Phi elimination pattern: load from dedicated alloca instead
+            // This case handles any direct phi instructions that weren't eliminated
+            // The op1_id contains the entry block value (for first iteration)
+            // Just alias to the incoming value from entry block
+            const rd = tcAllocReg(ctx, result_id)
+            const src = tcGetReg(ctx, op1_id)
+            if (src >= 0) {
+                emitMov(e, rd, src)
+            }
         }
 
         else => {

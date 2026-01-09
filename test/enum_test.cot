@@ -1,0 +1,31 @@
+// Simple enum test for cot-compiler
+
+enum Status {
+    Ok,
+    Error,
+    Pending,
+}
+
+fn statusMessage(s: Status) string {
+    switch (s) {
+        Status.Ok => { return "success" }
+        Status.Error => { return "failed" }
+        Status.Pending => { return "waiting" }
+    }
+    return "unknown"
+}
+
+fn main() {
+    const ok_status = Status.Ok
+    const err_status = Status.Error
+
+    const msg1 = statusMessage(ok_status)
+    const msg2 = statusMessage(err_status)
+
+    println(msg1)
+    println(msg2)
+
+    // Enum to int
+    const ordinal = Status.Error as i64
+    println(ordinal)
+}

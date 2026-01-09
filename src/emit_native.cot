@@ -1,0 +1,1694 @@
+// Native Code Emitter for Cot
+//
+// Translates Cot bytecode to ARM64 machine code using asm_arm64.
+// This is Phase 2 of the native code generator.
+
+import "asm_arm64"
+import "opcodes"
+
+// =============================================================================
+// Runtime Function IDs
+// =============================================================================
+
+enum RuntimeFn {
+    // String operations
+    StringNew,     // cot_string_new(data, len) -> str
+    StrLen,        // cot_str_len(str) -> i64
+    StrConcat,     // cot_str_concat(a, b) -> str
+
+    // List operations
+    ListNew,       // cot_list_new() -> list
+    ListPush,      // cot_list_push(list, val)
+    ListPop,       // cot_list_pop(list) -> val
+    ListGet,       // cot_list_get(list, idx) -> val
+    ListSet,       // cot_list_set(list, idx, val)
+    ListLen,       // cot_list_len(list) -> i64
+
+    // Map operations
+    MapNew,        // cot_map_new() -> map
+    MapSet,        // cot_map_set(map, key, val)
+    MapGet,        // cot_map_get(map, key) -> val
+    MapHas,        // cot_map_has(map, key) -> bool
+    MapDelete,     // cot_map_delete(map, key)
+    MapLen,        // cot_map_len(map) -> i64
+
+    // Record operations
+    RecordNew,     // cot_record_new(type_id, field_count) -> record
+    RecordGetField,// cot_record_get_field(record, idx) -> val
+    RecordSetField,// cot_record_set_field(record, idx, val)
+
+    // I/O operations
+    Print,         // cot_print(val)
+    Println,       // cot_println(val)
+    PrintInt,      // cot_print_int(val)
+    PrintlnInt,    // cot_println_int(val)
+
+    // Memory management
+    Retain,        // cot_retain(val)
+    Release,       // cot_release(val)
+
+    // Error handling
+    SetErrorHandler,   // cot_set_error_handler(handler_addr, saved_sp) -> i64
+    ClearErrorHandler, // cot_clear_error_handler()
+    Throw,             // cot_throw(error_value) -> handler_addr
+    GetError,          // cot_get_error() -> error_value
+
+    // Closure operations
+    ClosureNew,        // cot_closure_new(fn_idx, env) -> closure
+    ClosureGetFn,      // cot_closure_get_fn(closure) -> fn_idx
+    ClosureGetEnv,     // cot_closure_get_env(closure) -> env
+
+    // Variant operations
+    VariantNew,        // cot_variant_new(tag, payload_count) -> variant
+    VariantGetTag,     // cot_variant_get_tag(variant) -> tag
+    VariantGetPayload, // cot_variant_get_payload(variant, field_idx) -> value
+    VariantSetPayload  // cot_variant_set_payload(variant, field_idx, value)
+}
+
+impl RuntimeFn {
+    // Get the C symbol name for linking
+    fn symbolName(self: RuntimeFn) string {
+        switch (self) {
+            RuntimeFn.StringNew => { return "_cot_string_new" }
+            RuntimeFn.StrLen => { return "_cot_str_len" }
+            RuntimeFn.StrConcat => { return "_cot_str_concat" }
+            RuntimeFn.ListNew => { return "_cot_list_new" }
+            RuntimeFn.ListPush => { return "_cot_list_push" }
+            RuntimeFn.ListPop => { return "_cot_list_pop" }
+            RuntimeFn.ListGet => { return "_cot_list_get" }
+            RuntimeFn.ListSet => { return "_cot_list_set" }
+            RuntimeFn.ListLen => { return "_cot_list_len" }
+            RuntimeFn.MapNew => { return "_cot_map_new" }
+            RuntimeFn.MapSet => { return "_cot_map_set" }
+            RuntimeFn.MapGet => { return "_cot_map_get" }
+            RuntimeFn.MapHas => { return "_cot_map_has" }
+            RuntimeFn.MapDelete => { return "_cot_map_delete" }
+            RuntimeFn.MapLen => { return "_cot_map_len" }
+            RuntimeFn.RecordNew => { return "_cot_record_new" }
+            RuntimeFn.RecordGetField => { return "_cot_record_get_field" }
+            RuntimeFn.RecordSetField => { return "_cot_record_set_field" }
+            RuntimeFn.Print => { return "_cot_print" }
+            RuntimeFn.Println => { return "_cot_println" }
+            RuntimeFn.PrintInt => { return "_cot_print_int" }
+            RuntimeFn.PrintlnInt => { return "_cot_println_int" }
+            RuntimeFn.Retain => { return "_cot_retain" }
+            RuntimeFn.Release => { return "_cot_release" }
+            RuntimeFn.SetErrorHandler => { return "_cot_set_error_handler" }
+            RuntimeFn.ClearErrorHandler => { return "_cot_clear_error_handler" }
+            RuntimeFn.Throw => { return "_cot_throw" }
+            RuntimeFn.GetError => { return "_cot_get_error" }
+            RuntimeFn.ClosureNew => { return "_cot_closure_new" }
+            RuntimeFn.ClosureGetFn => { return "_cot_closure_get_fn" }
+            RuntimeFn.ClosureGetEnv => { return "_cot_closure_get_env" }
+            RuntimeFn.VariantNew => { return "_cot_variant_new" }
+            RuntimeFn.VariantGetTag => { return "_cot_variant_get_tag" }
+            RuntimeFn.VariantGetPayload => { return "_cot_variant_get_payload" }
+            RuntimeFn.VariantSetPayload => { return "_cot_variant_set_payload" }
+        }
+        return "_cot_unknown"
+    }
+}
+
+// =============================================================================
+// External Symbol Reference
+// =============================================================================
+
+struct ExternRef {
+    native_offset: i64,   // Offset in native code where BL instruction is
+    fn_id: RuntimeFn      // Which runtime function to call
+}
+
+// =============================================================================
+// Jump Relocation
+// =============================================================================
+
+struct JumpReloc {
+    native_offset: i64,   // Offset in native code where jump instruction is
+    target_bc_ip: i64     // Target bytecode IP to resolve
+}
+
+// =============================================================================
+// Call Relocation
+// =============================================================================
+
+struct CallReloc {
+    native_offset: i64,   // Offset in native code where call instruction is
+    routine_idx: i64      // Target routine index
+}
+
+// =============================================================================
+// Global Variable Reference (for relocation)
+// =============================================================================
+
+struct GlobalRef {
+    adrp_offset: i64,     // Offset in native code where ADRP instruction is
+    add_offset: i64,      // Offset in native code where ADD instruction is
+    global_idx: i64       // Index of the global variable
+}
+
+// =============================================================================
+// Constant Reference (for string constants in data section)
+// =============================================================================
+
+enum ConstantKind {
+    Int,
+    Float,
+    String,
+    Bool
+}
+
+struct NativeConstant {
+    kind: ConstantKind,
+    int_val: i64,
+    str_val: string,
+    float_val: f64,
+    bool_val: bool,
+    data_offset: i64      // Offset in const section (for strings)
+}
+
+struct ConstRef {
+    adrp_offset: i64,     // Offset in native code where ADRP instruction is
+    add_offset: i64,      // Offset in native code where ADD/LDR instruction is
+    const_idx: i64,       // Index of the constant
+    is_load: bool         // true = LDR (floats), false = ADD (strings/addresses)
+}
+
+// =============================================================================
+// Routine Info
+// =============================================================================
+
+struct RoutineInfo {
+    name: string,
+    bc_start: i64,        // Bytecode start offset
+    bc_length: i64,       // Bytecode length
+    local_count: i64,     // Number of local variables
+    native_start: i64     // Native code start offset (filled after compilation)
+}
+
+// =============================================================================
+// Native Compiler State
+// =============================================================================
+
+struct NativeCompiler {
+    asm: *Assembler,
+
+    // Bytecode being compiled
+    code: List<i64>,               // Bytecode bytes
+    constants: List<NativeConstant>, // Constant pool (typed constants)
+
+    // Routine information
+    routines: List<RoutineInfo>,
+
+    // Current routine state
+    current_routine: i64,
+    stack_size: i64,
+
+    // Global variables
+    global_count: i64,        // Number of globals (set by caller)
+
+    // Relocation tracking
+    jump_relocs: List<JumpReloc>,
+    call_relocs: List<CallReloc>,
+    extern_refs: List<ExternRef>,  // External runtime function calls
+    global_refs: List<GlobalRef>,  // Global variable accesses
+    const_refs: List<ConstRef>,    // String/float constant loads (need relocation)
+
+    // Bytecode IP -> native offset mapping
+    bc_to_native: Map<i64, i64>
+}
+
+impl NativeCompiler {
+    fn init() NativeCompiler {
+        return NativeCompiler{
+            .asm = new Assembler{
+                .code = new List<i64>,
+                .relocations = new List<Relocation>
+            },
+            .code = new List<i64>,
+            .constants = new List<NativeConstant>,
+            .routines = new List<RoutineInfo>,
+            .current_routine = 0,
+            .stack_size = 0,
+            .global_count = 0,
+            .jump_relocs = new List<JumpReloc>,
+            .call_relocs = new List<CallReloc>,
+            .extern_refs = new List<ExternRef>,
+            .global_refs = new List<GlobalRef>,
+            .const_refs = new List<ConstRef>,
+            .bc_to_native = new Map<i64, i64>
+        }
+    }
+
+    // Set the number of global variables
+    fn setGlobalCount(self: *NativeCompiler, count: i64) {
+        self.global_count = count
+    }
+
+    // Get global references for linking
+    fn getGlobalRefs(self: *NativeCompiler) List<GlobalRef> {
+        return self.global_refs
+    }
+
+    // Get constant references for linking
+    fn getConstRefs(self: *NativeCompiler) List<ConstRef> {
+        return self.const_refs
+    }
+
+    // Add an integer constant
+    fn addIntConstant(self: *NativeCompiler, val: i64) i64 {
+        var idx = self.constants.len()
+        self.constants.push(NativeConstant{
+            .kind = ConstantKind.Int,
+            .int_val = val,
+            .str_val = "",
+            .float_val = 0.0,
+            .bool_val = false,
+            .data_offset = 0
+        })
+        return idx
+    }
+
+    // Add a string constant
+    fn addStringConstant(self: *NativeCompiler, val: string) i64 {
+        var idx = self.constants.len()
+        self.constants.push(NativeConstant{
+            .kind = ConstantKind.String,
+            .int_val = 0,
+            .str_val = val,
+            .float_val = 0.0,
+            .bool_val = false,
+            .data_offset = -1  // Will be set when writing to const section
+        })
+        return idx
+    }
+
+    // Add a float constant
+    fn addFloatConstant(self: *NativeCompiler, val: f64) i64 {
+        var idx = self.constants.len()
+        self.constants.push(NativeConstant{
+            .kind = ConstantKind.Float,
+            .int_val = 0,
+            .str_val = "",
+            .float_val = val,
+            .bool_val = false,
+            .data_offset = -1  // Will be set when writing to const section
+        })
+        return idx
+    }
+
+    // Add a boolean constant
+    fn addBoolConstant(self: *NativeCompiler, val: bool) i64 {
+        var idx = self.constants.len()
+        self.constants.push(NativeConstant{
+            .kind = ConstantKind.Bool,
+            .int_val = 0,
+            .str_val = "",
+            .float_val = 0.0,
+            .bool_val = val,
+            .data_offset = 0
+        })
+        return idx
+    }
+
+    // Emit a call to a runtime function
+    // Arguments should already be in X0-X7 per AAPCS64
+    // Result (if any) will be in X0
+    fn emitRuntimeCall(self: *NativeCompiler, fn_id: RuntimeFn) {
+        // Record the external reference for linker
+        self.extern_refs.push(ExternRef{
+            .native_offset = self.asm.offset(),
+            .fn_id = fn_id
+        })
+        // Emit BL with placeholder offset (will be resolved by linker)
+        self.asm.bl(0)
+    }
+
+    // Get extern_refs for linking
+    fn getExternRefs(self: *NativeCompiler) List<ExternRef> {
+        return self.extern_refs
+    }
+
+    // Add a routine to compile
+    fn addRoutine(self: *NativeCompiler, name: string, bc_start: i64,
+                  bc_length: i64, local_count: i64) {
+        self.routines.push(RoutineInfo{
+            .name = name,
+            .bc_start = bc_start,
+            .bc_length = bc_length,
+            .local_count = local_count,
+            .native_start = 0
+        })
+    }
+
+    // Add bytecode to the code buffer
+    fn addBytecode(self: *NativeCompiler, byte: i64) {
+        self.code.push(byte)
+    }
+
+    // Read a byte from bytecode at given IP
+    fn readByte(self: *NativeCompiler, ip: i64) i64 {
+        if (ip < 0 or ip >= self.code.len()) {
+            return 0
+        }
+        return self.code.get(ip)
+    }
+
+    // Read a 16-bit value from bytecode (little-endian)
+    fn readU16(self: *NativeCompiler, ip: i64) i64 {
+        var lo = self.readByte(ip)
+        var hi = self.readByte(ip + 1)
+        return lo | (hi << 8)
+    }
+
+    // Read a signed 16-bit value from bytecode
+    fn readI16(self: *NativeCompiler, ip: i64) i64 {
+        var val = self.readU16(ip)
+        if (val >= 0x8000) {
+            return val - 0x10000
+        }
+        return val
+    }
+
+    // Compile all routines
+    fn compile(self: *NativeCompiler) {
+        var i: i64 = 0
+        while (i < self.routines.len()) {
+            self.compileRoutine(i)
+            i = i + 1
+        }
+
+        // Apply relocations
+        self.applyRelocations()
+    }
+
+    // Compile a single routine
+    fn compileRoutine(self: *NativeCompiler, routine_idx: i64) {
+        var routine = self.routines.get(routine_idx)
+        self.current_routine = routine_idx
+
+        // Record native start offset
+        var native_start = self.asm.offset()
+
+        // Update routine info with native start
+        self.routines.set(routine_idx, RoutineInfo{
+            .name = routine.name,
+            .bc_start = routine.bc_start,
+            .bc_length = routine.bc_length,
+            .local_count = routine.local_count,
+            .native_start = native_start
+        })
+
+        // Emit prologue
+        self.emitPrologue(routine.local_count)
+
+        // Compile bytecode
+        var ip = routine.bc_start
+        var bc_end = routine.bc_start + routine.bc_length
+
+        while (ip < bc_end) {
+            // Record bytecode IP -> native offset mapping
+            self.bc_to_native.set(ip, self.asm.offset())
+
+            var opcode_byte = self.readByte(ip)
+            var op = self.byteToOpcode(opcode_byte)
+            var op_size = operandSize(op)
+
+            self.compileOpcode(op, ip)
+
+            ip = ip + 1 + op_size
+        }
+    }
+
+    // Emit function prologue
+    fn emitPrologue(self: *NativeCompiler, local_count: i64) {
+        // Save frame pointer and link register
+        self.asm.pushFrame()
+        // Set up frame pointer
+        self.asm.setupFp()
+
+        // Allocate stack space for locals (16-byte aligned)
+        self.stack_size = ((local_count + 1) * 8 + 15) & 0xFFFFFFF0
+        if (self.stack_size > 0) {
+            self.asm.subSp(self.stack_size)
+        }
+
+        // Save callee-saved registers we use (x19-x24)
+        self.asm.stpPre(Reg.X19, Reg.X20, -16)
+        self.asm.stpPre(Reg.X21, Reg.X22, -16)
+        self.asm.stpPre(Reg.X23, Reg.X24, -16)
+    }
+
+    // Emit function epilogue
+    fn emitEpilogue(self: *NativeCompiler) {
+        // Restore callee-saved registers
+        self.asm.ldpPost(Reg.X23, Reg.X24, 16)
+        self.asm.ldpPost(Reg.X21, Reg.X22, 16)
+        self.asm.ldpPost(Reg.X19, Reg.X20, 16)
+
+        // Deallocate stack space
+        if (self.stack_size > 0) {
+            self.asm.addSp(self.stack_size)
+        }
+
+        // Restore frame pointer and link register, return
+        self.asm.popFrame()
+        self.asm.ret()
+    }
+
+    // Get local variable offset from frame pointer
+    fn localOffset(self: *NativeCompiler, slot: i64) i64 {
+        // Locals are stored below the frame pointer
+        // Skip saved callee registers (6 regs * 8 bytes = 48)
+        return -(48 + (slot + 1) * 8)
+    }
+
+    // Compile a single opcode
+    fn compileOpcode(self: *NativeCompiler, op: Opcode, ip: i64) {
+        switch (op) {
+            // === No-op ===
+            Opcode.Nop => {
+                self.asm.nop()
+            }
+
+            // === Halt ===
+            Opcode.Halt => {
+                self.asm.brk(0)
+            }
+
+            // === Register Move ===
+            Opcode.Mov => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                self.asm.mov(Reg.fromCot(rd), Reg.fromCot(rs))
+            }
+
+            // === Load Immediate ===
+            Opcode.MovI => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var imm = byte1 & 0xF
+                // Sign extend 4-bit immediate
+                if (imm >= 8) {
+                    imm = imm - 16
+                }
+                self.asm.movImm64(Reg.fromCot(rd), imm)
+            }
+
+            Opcode.MovI16 => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var imm = self.readI16(ip + 2)
+                self.asm.movImm64(Reg.fromCot(rd), imm)
+            }
+
+            // === Load Null/True/False ===
+            Opcode.LoadNull => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                // Load null as 0 for now
+                self.asm.movImm64(Reg.fromCot(rd), 0)
+            }
+
+            Opcode.LoadTrue => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                self.asm.movImm64(Reg.fromCot(rd), 1)
+            }
+
+            Opcode.LoadFalse => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                self.asm.movImm64(Reg.fromCot(rd), 0)
+            }
+
+            // === Local Variables ===
+            Opcode.LoadLocal => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var slot = byte1 & 0xF
+                var offset = self.localOffset(slot)
+                self.asm.ldr(Reg.fromCot(rd), Reg.X29, offset)
+            }
+
+            Opcode.StoreLocal => {
+                var byte1 = self.readByte(ip + 1)
+                var rs = (byte1 >> 4) & 0xF
+                var slot = byte1 & 0xF
+                var offset = self.localOffset(slot)
+                self.asm.str(Reg.fromCot(rs), Reg.X29, offset)
+            }
+
+            Opcode.LoadLocal16 => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var slot = self.readU16(ip + 2)
+                var offset = self.localOffset(slot)
+                self.asm.ldr(Reg.fromCot(rd), Reg.X29, offset)
+            }
+
+            Opcode.StoreLocal16 => {
+                var byte1 = self.readByte(ip + 1)
+                var rs = (byte1 >> 4) & 0xF
+                var slot = self.readU16(ip + 2)
+                var offset = self.localOffset(slot)
+                self.asm.str(Reg.fromCot(rs), Reg.X29, offset)
+            }
+
+            // === Arithmetic ===
+            Opcode.Add => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.add(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.Sub => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.sub(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.Mul => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.mul(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.Div => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.sdiv(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.Mod => {
+                // rd = rs1 % rs2 = rs1 - (rs1 / rs2) * rs2
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                // Use X9 as temp: X9 = rs1 / rs2
+                self.asm.sdiv(Reg.X9, Reg.fromCot(rs1), Reg.fromCot(rs2))
+                // rd = rs1 - X9 * rs2
+                self.asm.msub(Reg.fromCot(rd), Reg.X9, Reg.fromCot(rs2), Reg.fromCot(rs1))
+            }
+
+            Opcode.Neg => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                self.asm.neg(Reg.fromCot(rd), Reg.fromCot(rs))
+            }
+
+            Opcode.Incr => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                self.asm.addImm(Reg.fromCot(rd), Reg.fromCot(rd), 1)
+            }
+
+            Opcode.Decr => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                self.asm.subImm(Reg.fromCot(rd), Reg.fromCot(rd), 1)
+            }
+
+            // === Comparison ===
+            Opcode.CmpEq => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cset(Reg.fromCot(rd), Condition.EQ)
+            }
+
+            Opcode.CmpNe => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cset(Reg.fromCot(rd), Condition.NE)
+            }
+
+            Opcode.CmpLt => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cset(Reg.fromCot(rd), Condition.LT)
+            }
+
+            Opcode.CmpLe => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cset(Reg.fromCot(rd), Condition.LE)
+            }
+
+            Opcode.CmpGt => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cset(Reg.fromCot(rd), Condition.GT)
+            }
+
+            Opcode.CmpGe => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cset(Reg.fromCot(rd), Condition.GE)
+            }
+
+            // === Bitwise Operations ===
+            Opcode.BitAnd => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.bitAnd(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.BitOr => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.orr(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.BitXor => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.eor(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.BitNot => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                self.asm.mvn(Reg.fromCot(rd), Reg.fromCot(rs))
+            }
+
+            Opcode.Shl => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.lsl(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            Opcode.Shr => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                self.asm.lsr(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+            }
+
+            // === Logical Operations ===
+            Opcode.LogAnd => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                // rd = (rs1 != 0) && (rs2 != 0)
+                // Compare rs1 to 0, set rd to 1 if not zero
+                self.asm.cmp(Reg.fromCot(rs1), Reg.XZR)
+                self.asm.cset(Reg.fromCot(rd), Condition.NE)
+                // Compare rs2 to 0
+                self.asm.cmp(Reg.fromCot(rs2), Reg.XZR)
+                // AND with result of rs2 != 0
+                self.asm.cset(Reg.X9, Condition.NE)
+                self.asm.bitAnd(Reg.fromCot(rd), Reg.fromCot(rd), Reg.X9)
+            }
+
+            Opcode.LogOr => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                // rd = (rs1 != 0) || (rs2 != 0)
+                // OR the two values, then compare to 0
+                self.asm.orr(Reg.fromCot(rd), Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.asm.cmp(Reg.fromCot(rd), Reg.XZR)
+                self.asm.cset(Reg.fromCot(rd), Condition.NE)
+            }
+
+            Opcode.LogNot => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                // rd = (rs == 0) ? 1 : 0
+                self.asm.cmp(Reg.fromCot(rs), Reg.XZR)
+                self.asm.cset(Reg.fromCot(rd), Condition.EQ)
+            }
+
+            // === Type Operations ===
+            Opcode.IsNull => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                // rd = (rs == 0) - null is represented as 0
+                self.asm.cmp(Reg.fromCot(rs), Reg.XZR)
+                self.asm.cset(Reg.fromCot(rd), Condition.EQ)
+            }
+
+            Opcode.Select => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var cond_reg = byte1 & 0xF
+                var rtrue = (byte2 >> 4) & 0xF
+                var rfalse = byte2 & 0xF
+                // rd = cond ? rtrue : rfalse
+                self.asm.cmp(Reg.fromCot(cond_reg), Reg.XZR)
+                self.asm.csel(Reg.fromCot(rd), Reg.fromCot(rtrue), Reg.fromCot(rfalse), Condition.NE)
+            }
+
+            // === Global Variables ===
+            // Globals are stored in the __DATA,__data section as an array of i64
+            // We use ADRP + ADD to get the base address, then LDR/STR with offset
+            Opcode.LoadGlobal => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var idx = self.readU16(ip + 2)
+
+                // Record the relocation info
+                var adrp_off = self.asm.offset()
+                self.asm.adrp(Reg.X9, 0)  // Placeholder, resolved by linker
+
+                var add_off = self.asm.offset()
+                self.asm.addImm(Reg.X9, Reg.X9, 0)  // Placeholder, resolved by linker
+
+                // Track for relocation
+                self.global_refs.push(GlobalRef{
+                    .adrp_offset = adrp_off,
+                    .add_offset = add_off,
+                    .global_idx = idx
+                })
+
+                // Load from globals[idx] - each global is 8 bytes
+                var byte_offset = idx * 8
+                self.asm.ldr(Reg.fromCot(rd), Reg.X9, byte_offset)
+            }
+
+            Opcode.StoreGlobal => {
+                var byte1 = self.readByte(ip + 1)
+                var rs = (byte1 >> 4) & 0xF
+                var idx = self.readU16(ip + 2)
+
+                // Record the relocation info
+                var adrp_off = self.asm.offset()
+                self.asm.adrp(Reg.X9, 0)  // Placeholder, resolved by linker
+
+                var add_off = self.asm.offset()
+                self.asm.addImm(Reg.X9, Reg.X9, 0)  // Placeholder, resolved by linker
+
+                // Track for relocation
+                self.global_refs.push(GlobalRef{
+                    .adrp_offset = adrp_off,
+                    .add_offset = add_off,
+                    .global_idx = idx
+                })
+
+                // Store to globals[idx] - each global is 8 bytes
+                var byte_offset = idx * 8
+                self.asm.str(Reg.fromCot(rs), Reg.X9, byte_offset)
+            }
+
+            // === Constant Loading ===
+            Opcode.LoadConst => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var const_idx = self.readU16(ip + 2)
+
+                if (const_idx < self.constants.len()) {
+                    var constant = self.constants.get(const_idx)
+
+                    switch (constant.kind) {
+                        ConstantKind.Int => {
+                            // Integer: load immediate value
+                            self.asm.movImm64(Reg.fromCot(rd), constant.int_val)
+                        }
+
+                        ConstantKind.Bool => {
+                            // Boolean: load 0 or 1
+                            if (constant.bool_val) {
+                                self.asm.movImm64(Reg.fromCot(rd), 1)
+                            } else {
+                                self.asm.movImm64(Reg.fromCot(rd), 0)
+                            }
+                        }
+
+                        ConstantKind.String => {
+                            // String: load address from const section using ADRP + ADD
+                            // The string data is stored in __DATA,__const section
+                            var adrp_off = self.asm.offset()
+                            self.asm.adrp(Reg.fromCot(rd), 0)  // Placeholder
+
+                            var add_off = self.asm.offset()
+                            self.asm.addImm(Reg.fromCot(rd), Reg.fromCot(rd), 0)  // Placeholder
+
+                            // Track for relocation
+                            self.const_refs.push(ConstRef{
+                                .adrp_offset = adrp_off,
+                                .add_offset = add_off,
+                                .const_idx = const_idx,
+                                .is_load = false
+                            })
+                        }
+
+                        ConstantKind.Float => {
+                            // Float: load 8-byte IEEE 754 value from const section
+                            // using ADRP + LDR pattern
+                            var adrp_off = self.asm.offset()
+                            self.asm.adrp(Reg.fromCot(rd), 0)  // Placeholder
+
+                            var ldr_off = self.asm.offset()
+                            self.asm.ldr(Reg.fromCot(rd), Reg.fromCot(rd), 0)  // Placeholder
+
+                            // Track for relocation (is_load=true for LDR)
+                            self.const_refs.push(ConstRef{
+                                .adrp_offset = adrp_off,
+                                .add_offset = ldr_off,
+                                .const_idx = const_idx,
+                                .is_load = true
+                            })
+                        }
+                    }
+                } else {
+                    self.asm.movImm64(Reg.fromCot(rd), 0)
+                }
+            }
+
+            // === Comparison Jumps ===
+            Opcode.Jeq => {
+                var byte1 = self.readByte(ip + 1)
+                var rs1 = (byte1 >> 4) & 0xF
+                var rs2 = byte1 & 0xF
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+                self.asm.bCond(Condition.EQ, 0)
+            }
+
+            Opcode.Jne => {
+                var byte1 = self.readByte(ip + 1)
+                var rs1 = (byte1 >> 4) & 0xF
+                var rs2 = byte1 & 0xF
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+                self.asm.bCond(Condition.NE, 0)
+            }
+
+            Opcode.Jlt => {
+                var byte1 = self.readByte(ip + 1)
+                var rs1 = (byte1 >> 4) & 0xF
+                var rs2 = byte1 & 0xF
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+                self.asm.bCond(Condition.LT, 0)
+            }
+
+            Opcode.Jge => {
+                var byte1 = self.readByte(ip + 1)
+                var rs1 = (byte1 >> 4) & 0xF
+                var rs2 = byte1 & 0xF
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                self.asm.cmp(Reg.fromCot(rs1), Reg.fromCot(rs2))
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+                self.asm.bCond(Condition.GE, 0)
+            }
+
+            // === Control Flow ===
+            Opcode.Jmp => {
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                // Record relocation for later patching
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+
+                // Emit placeholder jump (will be patched)
+                self.asm.b(0)
+            }
+
+            Opcode.Jz => {
+                var byte1 = self.readByte(ip + 1)
+                var reg = byte1 & 0xF
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                // Record relocation
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+
+                // Emit placeholder CBZ
+                self.asm.cbz(Reg.fromCot(reg), 0)
+            }
+
+            Opcode.Jnz => {
+                var byte1 = self.readByte(ip + 1)
+                var reg = byte1 & 0xF
+                var offset = self.readI16(ip + 2)
+                var target_ip = ip + 4 + offset
+
+                // Record relocation
+                self.jump_relocs.push(JumpReloc{
+                    .native_offset = self.asm.offset(),
+                    .target_bc_ip = target_ip
+                })
+
+                // Emit placeholder CBNZ
+                self.asm.cbnz(Reg.fromCot(reg), 0)
+            }
+
+            // === Function Calls ===
+            Opcode.Call => {
+                var routine_idx = self.readU16(ip + 2)
+
+                // Record call relocation
+                self.call_relocs.push(CallReloc{
+                    .native_offset = self.asm.offset(),
+                    .routine_idx = routine_idx
+                })
+
+                // Emit placeholder BL
+                self.asm.bl(0)
+            }
+
+            Opcode.Ret => {
+                self.emitEpilogue()
+            }
+
+            Opcode.RetVal => {
+                var byte1 = self.readByte(ip + 1)
+                var reg = (byte1 >> 4) & 0xF
+
+                // Move return value to X0 if not already there
+                if (reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(reg))
+                }
+
+                self.emitEpilogue()
+            }
+
+            // === Debug ===
+            Opcode.DebugLine => {
+                // Skip debug line info in native code
+                self.asm.nop()
+            }
+
+            Opcode.DebugBreak => {
+                self.asm.brk(1)
+            }
+
+            // === Record/Struct Operations ===
+            Opcode.NewRecord => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var type_idx = self.readU16(ip + 2)
+                var field_count = self.readU16(ip + 4)
+                // Call cot_record_new(type_id, field_count) -> X0
+                self.asm.movImm64(Reg.X0, type_idx)
+                self.asm.movImm64(Reg.X1, field_count)
+                self.emitRuntimeCall(RuntimeFn.RecordNew)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.LoadField => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                var field_idx = self.readU16(ip + 2)
+                // Call cot_record_get_field(record, idx) -> X0
+                if (rs != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rs))
+                }
+                self.asm.movImm64(Reg.X1, field_idx)
+                self.emitRuntimeCall(RuntimeFn.RecordGetField)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.StoreField => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF  // Record pointer
+                var rs = byte1 & 0xF          // Value to store
+                var field_idx = self.readU16(ip + 2)
+                // Call cot_record_set_field(record, idx, val)
+                if (rd != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rd))
+                }
+                self.asm.movImm64(Reg.X1, field_idx)
+                if (rs != 2) {
+                    self.asm.mov(Reg.X2, Reg.fromCot(rs))
+                }
+                self.emitRuntimeCall(RuntimeFn.RecordSetField)
+            }
+
+            // === String Operations ===
+            Opcode.StrConcat => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var rs1 = byte1 & 0xF
+                var rs2 = (byte2 >> 4) & 0xF
+                // Call cot_str_concat(a, b) -> X0
+                if (rs1 != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rs1))
+                }
+                if (rs2 != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(rs2))
+                }
+                self.emitRuntimeCall(RuntimeFn.StrConcat)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.StrLen => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                // Call cot_str_len(str) -> X0
+                if (rs != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rs))
+                }
+                self.emitRuntimeCall(RuntimeFn.StrLen)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            // === List Operations ===
+            Opcode.ListNew => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                // Call cot_list_new() -> X0, then move to rd
+                self.emitRuntimeCall(RuntimeFn.ListNew)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.ListPush => {
+                var byte1 = self.readByte(ip + 1)
+                var list_reg = (byte1 >> 4) & 0xF
+                var val_reg = byte1 & 0xF
+                // Move args to X0, X1 for cot_list_push(list, val)
+                if (list_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(list_reg))
+                }
+                if (val_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(val_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ListPush)
+            }
+
+            Opcode.ListPop => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var list_reg = byte1 & 0xF
+                // Move list to X0 for cot_list_pop(list) -> X0
+                if (list_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(list_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ListPop)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.ListGet => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var list_reg = byte1 & 0xF
+                var idx_reg = (byte2 >> 4) & 0xF
+                // Move args to X0, X1 for cot_list_get(list, idx) -> X0
+                if (list_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(list_reg))
+                }
+                if (idx_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(idx_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ListGet)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.ListSet => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var list_reg = (byte1 >> 4) & 0xF
+                var idx_reg = byte1 & 0xF
+                var val_reg = (byte2 >> 4) & 0xF
+                // Move args to X0, X1, X2 for cot_list_set(list, idx, val)
+                if (list_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(list_reg))
+                }
+                if (idx_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(idx_reg))
+                }
+                if (val_reg != 2) {
+                    self.asm.mov(Reg.X2, Reg.fromCot(val_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ListSet)
+            }
+
+            Opcode.ListLen => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var list_reg = byte1 & 0xF
+                // Move list to X0 for cot_list_len(list) -> X0
+                if (list_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(list_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ListLen)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            // === Map Operations ===
+            Opcode.MapNew => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                // Call cot_map_new() -> X0
+                self.emitRuntimeCall(RuntimeFn.MapNew)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.MapSet => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var map_reg = (byte1 >> 4) & 0xF
+                var key_reg = byte1 & 0xF
+                var val_reg = (byte2 >> 4) & 0xF
+                // Move args for cot_map_set(map, key, val)
+                if (map_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(map_reg))
+                }
+                if (key_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(key_reg))
+                }
+                if (val_reg != 2) {
+                    self.asm.mov(Reg.X2, Reg.fromCot(val_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.MapSet)
+            }
+
+            Opcode.MapGet => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var map_reg = byte1 & 0xF
+                var key_reg = (byte2 >> 4) & 0xF
+                // Move args for cot_map_get(map, key) -> X0
+                if (map_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(map_reg))
+                }
+                if (key_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(key_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.MapGet)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.MapHas => {
+                var byte1 = self.readByte(ip + 1)
+                var byte2 = self.readByte(ip + 2)
+                var rd = (byte1 >> 4) & 0xF
+                var map_reg = byte1 & 0xF
+                var key_reg = (byte2 >> 4) & 0xF
+                // Move args for cot_map_has(map, key) -> X0
+                if (map_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(map_reg))
+                }
+                if (key_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(key_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.MapHas)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.MapDelete => {
+                var byte1 = self.readByte(ip + 1)
+                var map_reg = (byte1 >> 4) & 0xF
+                var key_reg = byte1 & 0xF
+                // Move args for cot_map_delete(map, key)
+                if (map_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(map_reg))
+                }
+                if (key_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(key_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.MapDelete)
+            }
+
+            Opcode.MapLen => {
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var map_reg = byte1 & 0xF
+                // Move arg for cot_map_len(map) -> X0
+                if (map_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(map_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.MapLen)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            // === I/O Operations ===
+            Opcode.Print => {
+                var byte1 = self.readByte(ip + 1)
+                var rs = (byte1 >> 4) & 0xF
+                // Move arg for cot_print(val)
+                if (rs != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rs))
+                }
+                self.emitRuntimeCall(RuntimeFn.Print)
+            }
+
+            Opcode.Println => {
+                var byte1 = self.readByte(ip + 1)
+                var rs = (byte1 >> 4) & 0xF
+                // Move arg for cot_println(val)
+                if (rs != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rs))
+                }
+                self.emitRuntimeCall(RuntimeFn.Println)
+            }
+
+            // === Error Handling Operations ===
+            Opcode.SetErrorHandler => {
+                // Format: [0] [offset:16]
+                // The offset points to the catch handler relative to end of instruction
+                var offset = self.readI16(ip + 1)
+                var handler_bc_ip = ip + 3 + offset  // end of instruction + offset
+
+                // Calculate native handler address (will be patched during relocation)
+                // For now, store the bytecode IP and we'll resolve it later
+                // Pass handler address and saved state to runtime
+                // X0 = handler bytecode IP (runtime can track native mapping)
+                // X1 = 0 (placeholder for saved state)
+                self.asm.movImm64(Reg.X0, handler_bc_ip)
+                self.asm.movImm64(Reg.X1, 0)  // Placeholder
+                self.emitRuntimeCall(RuntimeFn.SetErrorHandler)
+            }
+
+            Opcode.ClearErrorHandler => {
+                // No operands - just call the runtime function
+                self.emitRuntimeCall(RuntimeFn.ClearErrorHandler)
+            }
+
+            Opcode.ThrowOp => {
+                // Format: [rs:4|0] [0]
+                var byte1 = self.readByte(ip + 1)
+                var rs = (byte1 >> 4) & 0xF
+
+                // Move error value to X0 for cot_throw(error_value)
+                if (rs != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(rs))
+                }
+                self.emitRuntimeCall(RuntimeFn.Throw)
+
+                // If cot_throw returns 0, no handler - halt
+                // If non-zero, jump to returned address (handler)
+                // For now, simplified: if X0 != 0, branch to it
+                self.asm.cmpImm(Reg.X0, 0)
+                // TODO: Add conditional branch to X0 if handler exists
+                // For now, just continue (simplified error handling)
+            }
+
+            // === Stack Pointer Operations ===
+            Opcode.GetLocalPtr => {
+                // Format: [rd:4|0] [slot:16]
+                // Creates a pointer to the local variable at slot
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var slot = self.readU16(ip + 2)
+
+                // Calculate address: FP + localOffset(slot)
+                var offset = self.localOffset(slot)
+                // Use ADD to compute: rd = FP + offset
+                // Since offset is negative, we use SUB
+                if (offset < 0) {
+                    self.asm.subImm(Reg.fromCot(rd), Reg.X29, -offset)
+                } else {
+                    self.asm.addImm(Reg.fromCot(rd), Reg.X29, offset)
+                }
+            }
+
+            Opcode.LoadIndirect => {
+                // Format: [rd:4|rs:4] [offset:16]
+                // Loads value from (rs + offset*8) into rd
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var rs = byte1 & 0xF
+                var offset = self.readU16(ip + 2)
+
+                // Load from pointer + offset*8 (each slot is 8 bytes)
+                var byte_offset = offset * 8
+                self.asm.ldr(Reg.fromCot(rd), Reg.fromCot(rs), byte_offset)
+            }
+
+            Opcode.StoreIndirect => {
+                // Format: [rs_ptr:4|rs_val:4] [offset:16]
+                // Stores rs_val to (rs_ptr + offset*8)
+                var byte1 = self.readByte(ip + 1)
+                var rs_ptr = (byte1 >> 4) & 0xF
+                var rs_val = byte1 & 0xF
+                var offset = self.readU16(ip + 2)
+
+                // Store to pointer + offset*8 (each slot is 8 bytes)
+                var byte_offset = offset * 8
+                self.asm.str(Reg.fromCot(rs_val), Reg.fromCot(rs_ptr), byte_offset)
+            }
+
+            // === Closure Operations ===
+            Opcode.MakeClosure => {
+                // Format: [rd:4|env_reg:4] [fn_idx:16]
+                // Creates a closure from function index and environment
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var env_reg = byte1 & 0xF
+                var fn_idx = self.readU16(ip + 2)
+
+                // Call cot_closure_new(fn_idx, env) -> X0
+                self.asm.movImm64(Reg.X0, fn_idx)
+                if (env_reg != 1) {
+                    self.asm.mov(Reg.X1, Reg.fromCot(env_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ClosureNew)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.CallClosure => {
+                // Format: [rd:4|closure_reg:4] [argc:8]
+                // Calls a closure with given argument count
+                // This is complex for AOT: we need indirect call based on fn_idx
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var closure_reg = byte1 & 0xF
+                var argc = self.readByte(ip + 2)
+
+                // Save closure in callee-saved register for later
+                self.asm.mov(Reg.X19, Reg.fromCot(closure_reg))
+
+                // Get env from closure: cot_closure_get_env(closure) -> X0
+                if (closure_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(closure_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.ClosureGetEnv)
+                // Save env in X20 for later
+                self.asm.mov(Reg.X20, Reg.X0)
+
+                // Get fn_idx from closure: cot_closure_get_fn(closure) -> X0
+                self.asm.mov(Reg.X0, Reg.X19)
+                self.emitRuntimeCall(RuntimeFn.ClosureGetFn)
+                // fn_idx is now in X0
+
+                // For proper AOT closure calls, we would need a function pointer table
+                // and BLR (branch-link-register) instruction. For now, emit placeholder.
+                // The result register rd would be set from X0 after the call.
+                // TODO: Implement proper indirect calls through function pointer table
+
+                // Store argc for potential use (unused in simplified version)
+                self.asm.movImm64(Reg.X21, argc)
+
+                // Result would be in X0 after the actual call
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            // === Variant Operations ===
+            Opcode.VariantConstruct => {
+                // Format: [rd:4|argc:4] [tag:16]
+                // Constructs a variant with the given tag and payload values from r0..r(argc-1)
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var argc = byte1 & 0xF
+                var tag = self.readU16(ip + 2)
+
+                // First, create the variant: cot_variant_new(tag, argc) -> X0
+                self.asm.movImm64(Reg.X0, tag)
+                self.asm.movImm64(Reg.X1, argc)
+                self.emitRuntimeCall(RuntimeFn.VariantNew)
+                // Save variant pointer in X19 (callee-saved)
+                self.asm.mov(Reg.X19, Reg.X0)
+
+                // Now set each payload field from r0..r(argc-1)
+                var i: i64 = 0
+                while (i < argc) {
+                    // cot_variant_set_payload(variant, field_idx, value)
+                    self.asm.mov(Reg.X0, Reg.X19)  // variant
+                    self.asm.movImm64(Reg.X1, i)   // field_idx
+                    self.asm.mov(Reg.X2, Reg.fromCot(i))  // value from r[i]
+                    self.emitRuntimeCall(RuntimeFn.VariantSetPayload)
+                    i = i + 1
+                }
+
+                // Move variant to destination register
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X19)
+                } else {
+                    self.asm.mov(Reg.X0, Reg.X19)
+                }
+            }
+
+            Opcode.VariantGetTag => {
+                // Format: [rd:4|src_reg:4] [0]
+                // Gets the tag from a variant
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var src_reg = byte1 & 0xF
+
+                // Call cot_variant_get_tag(variant) -> X0
+                if (src_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(src_reg))
+                }
+                self.emitRuntimeCall(RuntimeFn.VariantGetTag)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            Opcode.VariantGetPayload => {
+                // Format: [rd:4|src_reg:4] [field_idx:16]
+                // Gets a payload field from a variant
+                var byte1 = self.readByte(ip + 1)
+                var rd = (byte1 >> 4) & 0xF
+                var src_reg = byte1 & 0xF
+                var field_idx = self.readU16(ip + 2)
+
+                // Call cot_variant_get_payload(variant, field_idx) -> X0
+                if (src_reg != 0) {
+                    self.asm.mov(Reg.X0, Reg.fromCot(src_reg))
+                }
+                self.asm.movImm64(Reg.X1, field_idx)
+                self.emitRuntimeCall(RuntimeFn.VariantGetPayload)
+                if (rd != 0) {
+                    self.asm.mov(Reg.fromCot(rd), Reg.X0)
+                }
+            }
+
+            // === Unhandled opcodes - emit NOP ===
+            else => {
+                self.asm.nop()
+            }
+        }
+    }
+
+    // Apply all pending relocations
+    fn applyRelocations(self: *NativeCompiler) {
+        // Apply jump relocations
+        var i: i64 = 0
+        while (i < self.jump_relocs.len()) {
+            var reloc = self.jump_relocs.get(i)
+
+            // Look up target native offset
+            if (self.bc_to_native.has(reloc.target_bc_ip)) {
+                var target_native = self.bc_to_native.get(reloc.target_bc_ip)
+                self.asm.patchBranch(reloc.native_offset, target_native)
+            }
+
+            i = i + 1
+        }
+
+        // Apply call relocations
+        i = 0
+        while (i < self.call_relocs.len()) {
+            var reloc = self.call_relocs.get(i)
+
+            // Look up routine native start
+            if (reloc.routine_idx < self.routines.len()) {
+                var routine = self.routines.get(reloc.routine_idx)
+                self.asm.patchBranch(reloc.native_offset, routine.native_start)
+            }
+
+            i = i + 1
+        }
+    }
+
+    // Convert byte to opcode enum
+    fn byteToOpcode(self: *NativeCompiler, byte: i64) Opcode {
+        switch (byte) {
+            0 => { return Opcode.Nop }
+            1 => { return Opcode.Halt }
+            16 => { return Opcode.Mov }
+            17 => { return Opcode.MovI }
+            18 => { return Opcode.MovI16 }
+            19 => { return Opcode.MovI32 }
+            20 => { return Opcode.LoadConst }
+            21 => { return Opcode.LoadNull }
+            22 => { return Opcode.LoadTrue }
+            23 => { return Opcode.LoadFalse }
+            32 => { return Opcode.LoadLocal }
+            33 => { return Opcode.StoreLocal }
+            34 => { return Opcode.LoadLocal16 }
+            35 => { return Opcode.StoreLocal16 }
+            36 => { return Opcode.LoadGlobal }
+            37 => { return Opcode.StoreGlobal }
+            48 => { return Opcode.Add }
+            49 => { return Opcode.Sub }
+            50 => { return Opcode.Mul }
+            51 => { return Opcode.Div }
+            52 => { return Opcode.Mod }
+            53 => { return Opcode.Neg }
+            54 => { return Opcode.AddI }
+            55 => { return Opcode.SubI }
+            56 => { return Opcode.MulI }
+            57 => { return Opcode.Incr }
+            58 => { return Opcode.Decr }
+            64 => { return Opcode.CmpEq }
+            65 => { return Opcode.CmpNe }
+            66 => { return Opcode.CmpLt }
+            67 => { return Opcode.CmpLe }
+            68 => { return Opcode.CmpGt }
+            69 => { return Opcode.CmpGe }
+            80 => { return Opcode.LogAnd }
+            81 => { return Opcode.LogOr }
+            82 => { return Opcode.LogNot }
+            83 => { return Opcode.BitAnd }
+            84 => { return Opcode.BitOr }
+            85 => { return Opcode.BitXor }
+            86 => { return Opcode.BitNot }
+            87 => { return Opcode.IsNull }
+            88 => { return Opcode.Select }
+            90 => { return Opcode.Shl }
+            91 => { return Opcode.Shr }
+            96 => { return Opcode.Jmp }
+            138 => { return Opcode.VariantConstruct }
+            139 => { return Opcode.VariantGetTag }
+            140 => { return Opcode.VariantGetPayload }
+            97 => { return Opcode.Jmp32 }
+            98 => { return Opcode.Jz }
+            99 => { return Opcode.Jnz }
+            100 => { return Opcode.Jeq }
+            101 => { return Opcode.Jne }
+            102 => { return Opcode.Jlt }
+            103 => { return Opcode.Jge }
+            106 => { return Opcode.SetErrorHandler }
+            107 => { return Opcode.ClearErrorHandler }
+            108 => { return Opcode.ThrowOp }
+            112 => { return Opcode.Call }
+            122 => { return Opcode.GetLocalPtr }
+            123 => { return Opcode.LoadIndirect }
+            124 => { return Opcode.StoreIndirect }
+            117 => { return Opcode.Ret }
+            118 => { return Opcode.RetVal }
+            240 => { return Opcode.DebugBreak }
+            241 => { return Opcode.DebugLine }
+            248 => { return Opcode.MakeClosure }
+            249 => { return Opcode.CallClosure }
+        }
+        return Opcode.Nop
+    }
+
+    // Get the generated native code
+    fn getCode(self: *NativeCompiler) List<i64> {
+        return self.asm.toBytes()
+    }
+
+    // Get code size in bytes
+    fn codeSize(self: *NativeCompiler) i64 {
+        return self.asm.offset()
+    }
+}

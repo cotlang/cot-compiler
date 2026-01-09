@@ -1,0 +1,21 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+impl Color {
+    fn name(self: Color) string {
+        switch (self) {
+            Color.Red => { return "red" }
+            Color.Green => { return "green" }
+            Color.Blue => { return "blue" }
+        }
+        return "unknown"
+    }
+}
+
+fn main() {
+    var c = Color.Red
+    println("Color: " + c.name())
+}

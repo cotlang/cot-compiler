@@ -158,6 +158,20 @@ enum Opcode {
     DebugBreak,
     DebugLine,
     Assert,
+
+    // Stack Pointer Operations
+    GetLocalPtr,
+    LoadIndirect,
+    StoreIndirect,
+
+    // Closure Operations
+    MakeClosure,
+    CallClosure,
+
+    // Variant Operations
+    VariantConstruct,
+    VariantGetTag,
+    VariantGetPayload,
 }
 
 // =============================================================================

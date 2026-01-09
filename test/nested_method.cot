@@ -1,0 +1,69 @@
+// Test nested method calls with struct fields
+// This simulates the Lexer.peekNext pattern from parser
+
+struct Inner {
+    data: string,
+    pos: i64,
+}
+
+impl Inner {
+    fn create(s: string) Inner {
+        return Inner{
+            .data = s,
+            .pos = 0,
+        }
+    }
+
+    fn getData(self: *Inner) string {
+        println("[Inner.getData] self.pos = " + string(self.pos))
+        println("[Inner.getData] self.data = " + self.data)
+        return self.data
+    }
+
+    fn advance(self: *Inner) {
+        println("[Inner.advance] before: pos = " + string(self.pos))
+        self.pos = self.pos + 1
+        println("[Inner.advance] after: pos = " + string(self.pos))
+    }
+}
+
+struct Outer {
+    inner: Inner,
+    name: string,
+}
+
+impl Outer {
+    fn create(s: string) Outer {
+        return Outer{
+            .inner = Inner.create(s),
+            .name = "outer",
+        }
+    }
+
+    fn process(self: *Outer) string {
+        println("[Outer.process] name = " + self.name)
+
+        // First call - should work
+        var d1 = self.inner.getData()
+        println("[Outer.process] d1 = " + d1)
+
+        // Modify inner state
+        self.inner.advance()
+
+        // Second call - test if self is still valid
+        var d2 = self.inner.getData()
+        println("[Outer.process] d2 = " + d2)
+
+        return d1
+    }
+}
+
+fn main() i64 {
+    var o = Outer.create("test-data")
+    println("created Outer")
+
+    var result = o.process()
+    println("result: " + result)
+
+    return 0
+}

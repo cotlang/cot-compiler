@@ -1,0 +1,25 @@
+// Test string concatenation without self access
+
+struct Builder {
+    prefix: string,
+}
+
+impl Builder {
+    fn create(p: string) *Builder {
+        return new Builder{ .prefix = p }
+    }
+
+    fn build(self: *Builder, a: string, b: string, c: string) string {
+        // Don't access self at all
+        var result = a + b + c
+        println("[build] result: " + result)
+        return result
+    }
+}
+
+fn main() i64 {
+    var bld = Builder.create("unused")
+    var r = bld.build("hello", "/", "world")
+    println("final: " + r)
+    return 0
+}

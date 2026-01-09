@@ -1,0 +1,737 @@
+// ARM64 Assembler Module for Cot Native Code Generation
+//
+// Generates ARM64 machine code for Apple Silicon Macs.
+//
+// Register Conventions (ARM64 / AAPCS64):
+//   x0-x7:   Arguments and return values
+//   x8:      Indirect result location (struct returns)
+//   x9-x15:  Temporary registers (caller-saved)
+//   x16-x17: Intra-procedure-call scratch (PLT, linker)
+//   x18:     Platform register (reserved on Apple)
+//   x19-x28: Callee-saved registers
+//   x29:     Frame pointer (FP)
+//   x30:     Link register (LR) - return address
+//   SP:      Stack pointer (x31 in some contexts)
+//   XZR:     Zero register (x31 in other contexts)
+//
+// Cot Register Mapping:
+//   r0-r7   -> x0-x7   (caller-saved, args/return)
+//   r8-r13  -> x19-x24 (callee-saved)
+//   r14     -> x29     (frame pointer)
+//   r15     -> x0      (return value register)
+
+// ARM64 register enumeration
+enum Reg {
+    X0, X1, X2, X3, X4, X5, X6, X7,
+    X8, X9, X10, X11, X12, X13, X14, X15,
+    X16, X17, X18, X19, X20, X21, X22, X23,
+    X24, X25, X26, X27, X28,
+    X29,  // Frame pointer
+    X30,  // Link register
+    XZR   // Zero register / SP (context dependent)
+}
+
+impl Reg {
+    // Get the numeric value of the register (0-31)
+    fn value(self: Reg) i64 {
+        switch (self) {
+            Reg.X0 => { return 0 }
+            Reg.X1 => { return 1 }
+            Reg.X2 => { return 2 }
+            Reg.X3 => { return 3 }
+            Reg.X4 => { return 4 }
+            Reg.X5 => { return 5 }
+            Reg.X6 => { return 6 }
+            Reg.X7 => { return 7 }
+            Reg.X8 => { return 8 }
+            Reg.X9 => { return 9 }
+            Reg.X10 => { return 10 }
+            Reg.X11 => { return 11 }
+            Reg.X12 => { return 12 }
+            Reg.X13 => { return 13 }
+            Reg.X14 => { return 14 }
+            Reg.X15 => { return 15 }
+            Reg.X16 => { return 16 }
+            Reg.X17 => { return 17 }
+            Reg.X18 => { return 18 }
+            Reg.X19 => { return 19 }
+            Reg.X20 => { return 20 }
+            Reg.X21 => { return 21 }
+            Reg.X22 => { return 22 }
+            Reg.X23 => { return 23 }
+            Reg.X24 => { return 24 }
+            Reg.X25 => { return 25 }
+            Reg.X26 => { return 26 }
+            Reg.X27 => { return 27 }
+            Reg.X28 => { return 28 }
+            Reg.X29 => { return 29 }
+            Reg.X30 => { return 30 }
+            Reg.XZR => { return 31 }
+        }
+        return 0
+    }
+
+    // Convert Cot virtual register (0-15) to ARM64 register
+    fn fromCot(r: i64) Reg {
+        switch (r) {
+            0 => { return Reg.X0 }
+            1 => { return Reg.X1 }
+            2 => { return Reg.X2 }
+            3 => { return Reg.X3 }
+            4 => { return Reg.X4 }
+            5 => { return Reg.X5 }
+            6 => { return Reg.X6 }
+            7 => { return Reg.X7 }
+            8 => { return Reg.X19 }   // Callee-saved
+            9 => { return Reg.X20 }
+            10 => { return Reg.X21 }
+            11 => { return Reg.X22 }
+            12 => { return Reg.X23 }
+            13 => { return Reg.X24 }
+            14 => { return Reg.X29 }  // Frame pointer
+            15 => { return Reg.X0 }   // Return value register
+        }
+        return Reg.X0
+    }
+}
+
+// ARM64 condition codes
+enum Condition {
+    EQ,  // Equal (Z=1)
+    NE,  // Not equal (Z=0)
+    CS,  // Carry set / unsigned higher or same
+    CC,  // Carry clear / unsigned lower
+    MI,  // Minus / negative
+    PL,  // Plus / positive or zero
+    VS,  // Overflow
+    VC,  // No overflow
+    HI,  // Unsigned higher
+    LS,  // Unsigned lower or same
+    GE,  // Signed greater or equal
+    LT,  // Signed less than
+    GT,  // Signed greater than
+    LE,  // Signed less or equal
+    AL   // Always
+}
+
+impl Condition {
+    // Get numeric condition code value
+    fn value(self: Condition) i64 {
+        switch (self) {
+            Condition.EQ => { return 0 }
+            Condition.NE => { return 1 }
+            Condition.CS => { return 2 }
+            Condition.CC => { return 3 }
+            Condition.MI => { return 4 }
+            Condition.PL => { return 5 }
+            Condition.VS => { return 6 }
+            Condition.VC => { return 7 }
+            Condition.HI => { return 8 }
+            Condition.LS => { return 9 }
+            Condition.GE => { return 10 }
+            Condition.LT => { return 11 }
+            Condition.GT => { return 12 }
+            Condition.LE => { return 13 }
+            Condition.AL => { return 14 }
+        }
+        return 14
+    }
+
+    // Invert the condition
+    fn invert(self: Condition) Condition {
+        switch (self) {
+            Condition.EQ => { return Condition.NE }
+            Condition.NE => { return Condition.EQ }
+            Condition.CS => { return Condition.CC }
+            Condition.CC => { return Condition.CS }
+            Condition.MI => { return Condition.PL }
+            Condition.PL => { return Condition.MI }
+            Condition.VS => { return Condition.VC }
+            Condition.VC => { return Condition.VS }
+            Condition.HI => { return Condition.LS }
+            Condition.LS => { return Condition.HI }
+            Condition.GE => { return Condition.LT }
+            Condition.LT => { return Condition.GE }
+            Condition.GT => { return Condition.LE }
+            Condition.LE => { return Condition.GT }
+            Condition.AL => { return Condition.AL }
+        }
+        return Condition.AL
+    }
+}
+
+// Relocation kind for fixups
+enum RelocKind {
+    Jump,      // Internal jump to bytecode IP
+    Call,      // Call to routine by index
+    External   // External symbol reference
+}
+
+// Relocation entry for fixups
+struct Relocation {
+    offset: i64,       // Offset in code buffer where fixup is needed
+    target_ip: i64,    // Target bytecode IP (for jumps) or routine index (for calls)
+    kind: RelocKind
+}
+
+// ARM64 Code Assembler
+struct Assembler {
+    code: List<i64>,              // Machine code as 32-bit words
+    relocations: List<Relocation> // Pending relocations
+}
+
+impl Assembler {
+    // Create a new assembler
+    fn init() Assembler {
+        return Assembler{
+            .code = new List<i64>,
+            .relocations = new List<Relocation>
+        }
+    }
+
+    // Emit a 32-bit instruction
+    fn emit(self: *Assembler, inst: i64) {
+        self.code.push(inst)
+    }
+
+    // Get current code offset (in bytes)
+    fn offset(self: *Assembler) i64 {
+        return self.code.len() * 4
+    }
+
+    // Get current code offset (in instructions)
+    fn instructionCount(self: *Assembler) i64 {
+        return self.code.len()
+    }
+
+    // Add a relocation
+    fn addRelocation(self: *Assembler, kind: RelocKind, target: i64) {
+        self.relocations.push(Relocation{
+            .offset = self.offset(),
+            .target_ip = target,
+            .kind = kind
+        })
+    }
+
+    // =========================================================================
+    // Data Processing - Immediate
+    // =========================================================================
+
+    // MOVZ Xd, #imm16, LSL #shift (move wide with zero)
+    fn movz(self: *Assembler, rd: Reg, imm16: i64, shift: i64) {
+        var hw = shift / 16
+        var inst = 0xD2800000 | (hw << 21) | ((imm16 & 0xFFFF) << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // MOVK Xd, #imm16, LSL #shift (move wide with keep)
+    fn movk(self: *Assembler, rd: Reg, imm16: i64, shift: i64) {
+        var hw = shift / 16
+        var inst = 0xF2800000 | (hw << 21) | ((imm16 & 0xFFFF) << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // Load a 64-bit immediate into register
+    fn movImm64(self: *Assembler, rd: Reg, imm: i64) {
+        // Check if it fits in 16 bits
+        if (imm >= 0 and imm <= 0xFFFF) {
+            self.movz(rd, imm, 0)
+            return
+        }
+
+        // Otherwise, build it up with MOVZ + MOVK
+        self.movz(rd, imm & 0xFFFF, 0)
+        if (((imm >> 16) & 0xFFFF) != 0) {
+            self.movk(rd, (imm >> 16) & 0xFFFF, 16)
+        }
+        if (((imm >> 32) & 0xFFFF) != 0) {
+            self.movk(rd, (imm >> 32) & 0xFFFF, 32)
+        }
+        if (((imm >> 48) & 0xFFFF) != 0) {
+            self.movk(rd, (imm >> 48) & 0xFFFF, 48)
+        }
+    }
+
+    // =========================================================================
+    // Data Processing - Register
+    // =========================================================================
+
+    // MOV Xd, Xn (register to register, alias for ORR Xd, XZR, Xn)
+    fn mov(self: *Assembler, rd: Reg, rn: Reg) {
+        self.orr(rd, Reg.XZR, rn)
+    }
+
+    // ADD Xd, Xn, Xm
+    fn add(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0x8B000000 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // SUB Xd, Xn, Xm
+    fn sub(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0xCB000000 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // MUL Xd, Xn, Xm (actually MADD Xd, Xn, Xm, XZR)
+    fn mul(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0x9B007C00 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // SDIV Xd, Xn, Xm (signed divide)
+    fn sdiv(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0x9AC00C00 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // MSUB Xd, Xn, Xm, Xa (multiply-subtract: Xd = Xa - Xn * Xm)
+    fn msub(self: *Assembler, rd: Reg, rn: Reg, rm: Reg, ra: Reg) {
+        var inst = 0x9B008000 | (rm.value() << 16) | (ra.value() << 10) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // ADD Xd, Xn, #imm12 (add immediate)
+    fn addImm(self: *Assembler, rd: Reg, rn: Reg, imm12: i64) {
+        var inst = 0x91000000 | ((imm12 & 0xFFF) << 10) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // SUB Xd, Xn, #imm12 (subtract immediate)
+    fn subImm(self: *Assembler, rd: Reg, rn: Reg, imm12: i64) {
+        var inst = 0xD1000000 | ((imm12 & 0xFFF) << 10) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // AND Xd, Xn, Xm
+    fn bitAnd(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0x8A000000 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // ORR Xd, Xn, Xm
+    fn orr(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0xAA000000 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // EOR Xd, Xn, Xm (XOR)
+    fn eor(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0xCA000000 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // NEG Xd, Xm (SUB Xd, XZR, Xm)
+    fn neg(self: *Assembler, rd: Reg, rm: Reg) {
+        self.sub(rd, Reg.XZR, rm)
+    }
+
+    // MVN Xd, Xm (bitwise NOT - ORN Xd, XZR, Xm)
+    fn mvn(self: *Assembler, rd: Reg, rm: Reg) {
+        var inst = 0xAA200000 | (rm.value() << 16) | (Reg.XZR.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // LSL Xd, Xn, Xm (logical shift left)
+    fn lsl(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        // LSLV Xd, Xn, Xm
+        var inst = 0x9AC02000 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // LSR Xd, Xn, Xm (logical shift right)
+    fn lsr(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        // LSRV Xd, Xn, Xm
+        var inst = 0x9AC02400 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // ASR Xd, Xn, Xm (arithmetic shift right)
+    fn asr(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        // ASRV Xd, Xn, Xm
+        var inst = 0x9AC02800 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // UDIV Xd, Xn, Xm (unsigned divide)
+    fn udiv(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0x9AC00800 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // CSEL Xd, Xn, Xm, cond (conditional select)
+    fn csel(self: *Assembler, rd: Reg, rn: Reg, rm: Reg, cond: Condition) {
+        var inst = 0x9A800000 | (rm.value() << 16) | (cond.value() << 12) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // =========================================================================
+    // Comparison
+    // =========================================================================
+
+    // CMP Xn, Xm (SUBS XZR, Xn, Xm)
+    fn cmp(self: *Assembler, rn: Reg, rm: Reg) {
+        var inst = 0xEB000000 | (rm.value() << 16) | (rn.value() << 5) | Reg.XZR.value()
+        self.emit(inst)
+    }
+
+    // CSET Xd, cond (set Xd to 1 if condition, else 0)
+    fn cset(self: *Assembler, rd: Reg, cond: Condition) {
+        // CSINC Xd, XZR, XZR, invert(cond)
+        var inv_cond = cond.invert().value()
+        var inst = 0x9A9F0400 | (inv_cond << 12) | rd.value()
+        self.emit(inst)
+    }
+
+    // =========================================================================
+    // Branches
+    // =========================================================================
+
+    // B offset (unconditional branch)
+    // offset is in bytes, will be converted to instruction count
+    fn b(self: *Assembler, offset: i64) {
+        var imm26 = (offset / 4) & 0x03FFFFFF
+        var inst = 0x14000000 | imm26
+        self.emit(inst)
+    }
+
+    // BL offset (branch with link - function call)
+    fn bl(self: *Assembler, offset: i64) {
+        var imm26 = (offset / 4) & 0x03FFFFFF
+        var inst = 0x94000000 | imm26
+        self.emit(inst)
+    }
+
+    // B.cond offset (conditional branch)
+    fn bCond(self: *Assembler, cond: Condition, offset: i64) {
+        var imm19 = (offset / 4) & 0x0007FFFF
+        var inst = 0x54000000 | (imm19 << 5) | cond.value()
+        self.emit(inst)
+    }
+
+    // CBZ Xn, offset (compare and branch if zero)
+    fn cbz(self: *Assembler, rn: Reg, offset: i64) {
+        var imm19 = (offset / 4) & 0x0007FFFF
+        var inst = 0xB4000000 | (imm19 << 5) | rn.value()
+        self.emit(inst)
+    }
+
+    // CBNZ Xn, offset (compare and branch if not zero)
+    fn cbnz(self: *Assembler, rn: Reg, offset: i64) {
+        var imm19 = (offset / 4) & 0x0007FFFF
+        var inst = 0xB5000000 | (imm19 << 5) | rn.value()
+        self.emit(inst)
+    }
+
+    // RET (return via X30)
+    fn ret(self: *Assembler) {
+        self.emit(0xD65F03C0)
+    }
+
+    // =========================================================================
+    // Load/Store
+    // =========================================================================
+
+    // LDR Xd, [Xn, #offset] (load 64-bit)
+    fn ldr(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 32768 and offset % 8 == 0) {
+            // Unsigned offset form: LDR Xd, [Xn, #pimm]
+            var pimm = offset / 8
+            var inst = 0xF9400000 | (pimm << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            // Signed offset form: LDUR Xd, [Xn, #simm9]
+            var simm9 = offset & 0x1FF
+            var inst = 0xF8400000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // STR Xd, [Xn, #offset] (store 64-bit)
+    fn str(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 32768 and offset % 8 == 0) {
+            // Unsigned offset form
+            var pimm = offset / 8
+            var inst = 0xF9000000 | (pimm << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            // Signed offset form: STUR
+            var simm9 = offset & 0x1FF
+            var inst = 0xF8000000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // LDR Xd, [Xn, Xm] (load with register offset)
+    fn ldrReg(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        // LDR (register): 11 111 0 00 01 1 Rm option S 10 Rn Rd
+        // option=011 (LSL), S=1 (shift by 3)
+        var inst = 0xF8607800 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // STR Xd, [Xn, Xm] (store with register offset)
+    fn strReg(self: *Assembler, rd: Reg, rn: Reg, rm: Reg) {
+        var inst = 0xF8207800 | (rm.value() << 16) | (rn.value() << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // LDRB Wd, [Xn, #offset] (load byte, zero-extend to 64-bit)
+    fn ldrb(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 4096) {
+            var inst = 0x39400000 | (offset << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            // Use LDURB for signed offset
+            var simm9 = offset & 0x1FF
+            var inst = 0x38400000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // STRB Wd, [Xn, #offset] (store byte)
+    fn strb(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 4096) {
+            var inst = 0x39000000 | (offset << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            var simm9 = offset & 0x1FF
+            var inst = 0x38000000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // LDRH Wd, [Xn, #offset] (load halfword, zero-extend)
+    fn ldrh(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 8192 and (offset % 2) == 0) {
+            var pimm = offset / 2
+            var inst = 0x79400000 | (pimm << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            var simm9 = offset & 0x1FF
+            var inst = 0x78400000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // STRH Wd, [Xn, #offset] (store halfword)
+    fn strh(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 8192 and (offset % 2) == 0) {
+            var pimm = offset / 2
+            var inst = 0x79000000 | (pimm << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            var simm9 = offset & 0x1FF
+            var inst = 0x78000000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // LDR Wd, [Xn, #offset] (load 32-bit word)
+    fn ldrw(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 16384 and (offset % 4) == 0) {
+            var pimm = offset / 4
+            var inst = 0xB9400000 | (pimm << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            var simm9 = offset & 0x1FF
+            var inst = 0xB8400000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // STR Wd, [Xn, #offset] (store 32-bit word)
+    fn strw(self: *Assembler, rd: Reg, rn: Reg, offset: i64) {
+        if (offset >= 0 and offset < 16384 and (offset % 4) == 0) {
+            var pimm = offset / 4
+            var inst = 0xB9000000 | (pimm << 10) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        } else {
+            var simm9 = offset & 0x1FF
+            var inst = 0xB8000000 | (simm9 << 12) | (rn.value() << 5) | rd.value()
+            self.emit(inst)
+        }
+    }
+
+    // ADRP Xd, label (load PC-relative page address)
+    // Used for loading addresses from data sections
+    fn adrp(self: *Assembler, rd: Reg, pageOffset: i64) {
+        // The page offset is a 21-bit signed value (bits 12-32 of address)
+        var imm21 = pageOffset & 0x1FFFFF
+        var immlo = imm21 & 0x3
+        var immhi = (imm21 >> 2) & 0x7FFFF
+        var inst = 0x90000000 | (immlo << 29) | (immhi << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // =========================================================================
+    // Stack Operations
+    // =========================================================================
+
+    // STP X29, X30, [SP, #-16]! (push frame pointer and link register)
+    fn pushFrame(self: *Assembler) {
+        self.emit(0xA9BF7BFD)
+    }
+
+    // LDP X29, X30, [SP], #16 (pop frame pointer and link register)
+    fn popFrame(self: *Assembler) {
+        self.emit(0xA8C17BFD)
+    }
+
+    // MOV X29, SP (set up frame pointer)
+    fn setupFp(self: *Assembler) {
+        self.emit(0x910003FD)
+    }
+
+    // SUB SP, SP, #imm (allocate stack space)
+    fn subSp(self: *Assembler, size: i64) {
+        var inst = 0xD10003FF | ((size & 0xFFF) << 10)
+        self.emit(inst)
+    }
+
+    // ADD SP, SP, #imm (deallocate stack space)
+    fn addSp(self: *Assembler, size: i64) {
+        var inst = 0x910003FF | ((size & 0xFFF) << 10)
+        self.emit(inst)
+    }
+
+    // STP Rt1, Rt2, [SP, #offset]! (store pair pre-index)
+    fn stpPre(self: *Assembler, rt1: Reg, rt2: Reg, offset: i64) {
+        // STP pre-index: 10 101 0 011 imm7 Rt2 Rn Rt1
+        // Rn = SP (31)
+        var imm7 = (offset / 8) & 0x7F
+        var inst = 0xA9800000 | (imm7 << 15) | (rt2.value() << 10) | (31 << 5) | rt1.value()
+        self.emit(inst)
+    }
+
+    // LDP Rt1, Rt2, [SP], #offset (load pair post-index)
+    fn ldpPost(self: *Assembler, rt1: Reg, rt2: Reg, offset: i64) {
+        // LDP post-index: 10 101 0 001 imm7 Rt2 Rn Rt1
+        // Rn = SP (31)
+        var imm7 = (offset / 8) & 0x7F
+        var inst = 0xA8C00000 | (imm7 << 15) | (rt2.value() << 10) | (31 << 5) | rt1.value()
+        self.emit(inst)
+    }
+
+    // =========================================================================
+    // System
+    // =========================================================================
+
+    // NOP
+    fn nop(self: *Assembler) {
+        self.emit(0xD503201F)
+    }
+
+    // BRK #imm16 (breakpoint)
+    fn brk(self: *Assembler, imm: i64) {
+        var inst = 0xD4200000 | ((imm & 0xFFFF) << 5)
+        self.emit(inst)
+    }
+
+    // ADR Xd, #imm (PC-relative address)
+    fn adr(self: *Assembler, rd: Reg, imm: i64) {
+        var imm21 = imm & 0x1FFFFF
+        var immlo = imm21 & 0x3
+        var immhi = (imm21 >> 2) & 0x7FFFF
+        var inst = (immlo << 29) | 0x10000000 | (immhi << 5) | rd.value()
+        self.emit(inst)
+    }
+
+    // SVC #imm16 (supervisor call / syscall)
+    fn svc(self: *Assembler, imm: i64) {
+        var inst = 0xD4000001 | ((imm & 0xFFFF) << 5)
+        self.emit(inst)
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    // Patch a branch instruction at the given offset
+    fn patchBranch(self: *Assembler, patchOffset: i64, target: i64) {
+        var inst_idx = patchOffset / 4
+        var old_inst = self.code.get(inst_idx)
+        var opcode = old_inst & 0xFC000000
+
+        // Calculate new offset
+        var branch_offset = target - patchOffset
+        var imm = branch_offset / 4
+
+        // Check instruction type and patch
+        if (opcode == 0x14000000) {
+            // B instruction
+            self.code.set(inst_idx, 0x14000000 | (imm & 0x03FFFFFF))
+        } else if (opcode == 0x94000000) {
+            // BL instruction
+            self.code.set(inst_idx, 0x94000000 | (imm & 0x03FFFFFF))
+        } else if ((old_inst & 0xFF000000) == 0x54000000) {
+            // B.cond instruction
+            var cond = old_inst & 0xF
+            self.code.set(inst_idx, 0x54000000 | ((imm & 0x7FFFF) << 5) | cond)
+        } else if ((old_inst & 0xFF000000) == 0xB4000000) {
+            // CBZ instruction
+            var rn = old_inst & 0x1F
+            self.code.set(inst_idx, 0xB4000000 | ((imm & 0x7FFFF) << 5) | rn)
+        } else if ((old_inst & 0xFF000000) == 0xB5000000) {
+            // CBNZ instruction
+            var rn = old_inst & 0x1F
+            self.code.set(inst_idx, 0xB5000000 | ((imm & 0x7FFFF) << 5) | rn)
+        }
+    }
+
+    // Get code as bytes (little-endian)
+    fn toBytes(self: *Assembler) List<i64> {
+        var bytes = new List<i64>
+        var i = 0
+        while (i < self.code.len()) {
+            var word = self.code.get(i)
+            bytes.push(word & 0xFF)
+            bytes.push((word >> 8) & 0xFF)
+            bytes.push((word >> 16) & 0xFF)
+            bytes.push((word >> 24) & 0xFF)
+            i = i + 1
+        }
+        return bytes
+    }
+}
+
+// =========================================================================
+// Helper functions for common patterns
+// =========================================================================
+
+// Emit function prologue
+fn emitPrologue(asm: *Assembler, local_count: i64) {
+    // Save frame pointer and link register
+    asm.pushFrame()
+    // Set up frame pointer
+    asm.setupFp()
+
+    // Allocate stack space for locals (16-byte aligned)
+    var stack_size = ((local_count + 1) * 8 + 15) & 0xFFFFFFF0
+    if (stack_size > 0) {
+        asm.subSp(stack_size)
+    }
+
+    // Save callee-saved registers we use (x19-x24)
+    asm.stpPre(Reg.X19, Reg.X20, -16)
+    asm.stpPre(Reg.X21, Reg.X22, -16)
+    asm.stpPre(Reg.X23, Reg.X24, -16)
+}
+
+// Emit function epilogue
+fn emitEpilogue(asm: *Assembler, local_count: i64) {
+    // Restore callee-saved registers
+    asm.ldpPost(Reg.X23, Reg.X24, 16)
+    asm.ldpPost(Reg.X21, Reg.X22, 16)
+    asm.ldpPost(Reg.X19, Reg.X20, 16)
+
+    // Deallocate stack space
+    var stack_size = ((local_count + 1) * 8 + 15) & 0xFFFFFFF0
+    if (stack_size > 0) {
+        asm.addSp(stack_size)
+    }
+
+    // Restore frame pointer and link register, return
+    asm.popFrame()
+    asm.ret()
+}
